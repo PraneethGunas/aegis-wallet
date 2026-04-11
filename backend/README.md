@@ -1,414 +1,281 @@
-# Aegis Backend — UI/UX Integration Reference
+# Aegis — The Agentic Bitcoin Wallet
 
-This document covers everything the frontend needs to know about the backend MCP layer: WebSocket events, tool response shapes, failure states, data fields, and integration notes.
+A seedless Bitcoin wallet where Claude is your AI financial agent — spending within cryptographically enforced Lightning budgets, hitting real budget walls, and escalating to your biometric approval when it needs more.
 
----
-
-## Table of Contents
-
-1. [WebSocket Events](#websocket-events)
-2. [MCP Tools & Response Shapes](#mcp-tools--response-shapes)
-3. [Failure States](#failure-states)
-4. [Data Records & Fields](#data-records--fields)
-5. [Audit Log](#audit-log)
-6. [Integration Notes](#integration-notes)
+No seed phrase. No 24 words. Your keys live in your device's secure enclave, derived from a passkey. Face ID is your signature.
 
 ---
 
-## WebSocket Events
+## How It Works
 
-Connect to the WebSocket server with a credential ID as a query param (`?token=<credential_id>`). All events share the same envelope:
+Aegis splits custody across two layers:
 
-```json
-{
-  "event": "<event name>",
-  "data": { ... },
-  "timestamp": "<ISO8601>"
-}
+```
+┌─────────────────────────────────────────────────┐
+│  L1: FUNDING WALLET (Self-Custody)              │
+│  Standard Taproot address on mainnet.            │
+│  Passkey derives your key AND signs txs.         │
+│  Server has ZERO access to funding wallet.       │
+├─────────────────────────────────────────────────┤
+│  ↕ You move funds between layers (Face ID)      │
+├─────────────────────────────────────────────────┤
+│  L2: SPENDING (Custodial Lightning)             │
+│  LND + litd node. Claude operates here via MCP. │
+│  Passkey = auth only. LND holds signing keys.    │
+│  Macaroon-enforced budget ceiling.               │
+│  Exposure limited to spending balance only.      │
+└─────────────────────────────────────────────────┘
 ```
 
-### `connected`
-Fires on successful authentication.
-```json
-{
-  "event": "connected",
-  "data": { "credential_id": "user_1" },
-  "timestamp": "2026-04-11T12:00:00.000Z"
-}
+**Layer 1 (Funding)** — A standard Taproot address on Bitcoin mainnet. Your passkey derives the private key AND signs all on-chain transactions — the passkey IS the key. It never leaves your browser. This is a simple self-custody funding wallet. No covenants, no multi-sig, no agent involvement. If our server disappears, you still have your key.
+
+**Layer 2 (Spending)** — An LND Lightning node wrapped by litd. Claude gets wallet tools via an MCP server backed by a scoped macaroon (a cryptographic bearer token) with a hard spending ceiling enforced by LND's RPC middleware. Payments are instant. Claude can pay invoices, check balances, and request more budget — all within its ceiling. Anything above the limit triggers a biometric approval prompt. The passkey authenticates you to our backend on L2 but does NOT sign Lightning transactions — LND holds those keys.
+
+**Passkey (Control Plane)** — WebAuthn PRF extension derives keys from your device's secure enclave. No seed phrase is ever generated, shown, or stored. On L1, the passkey derives the key and signs. On L2, the passkey authenticates. The passkey credential ID IS the user identity — no separate account or login. Recovery = passkey syncs to your new device, wallet regenerates deterministically.
+
+---
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────────────┐
+│                   USER'S BROWSER                      │
+│                                                        │
+│  Secure Enclave ──→ Passkey (PRF) ──→ Key Derivation │
+│                                                        │
+│  funding_key:  m/86h/0h/0h/0/0  (Taproot, L1 signer)│
+│  auth_key:     m/84h/0h/0h/0/0  (L2 auth only)      │
+│                                                        │
+│  On-chain transactions signed HERE, in the browser.   │
+│  Keys NEVER sent to the server.                        │
+└──────────────────────┬───────────────────────────────┘
+                       │ HTTPS / WSS
+┌──────────────────────▼───────────────────────────────┐
+│                   BACKEND SERVER                      │
+│                                                        │
+│  Node.js + Express API                                │
+│  ├── LND + litd ← L2 Lightning payments              │
+│  ├── MCP Server ← exposes wallet tools to Claude     │
+│  └── Scoped macaroon ← budget-limited, server-side   │
+└──────────────────────────────────────────────────────┘
+
+┌──────────────────────┐         ┌──────────────────────┐
+│  Claude               │  MCP   │  Aegis MCP Server     │
+│  (Code / Cowork /     │◄──────►│  ├─ pay_invoice       │
+│   Chat + MCP)         │        │  ├─ get_balance       │
+│                        │        │  ├─ request_approval  │
+│  Claude IS the agent.  │        │  ├─ request_topup     │
+│                        │        │  └─ macaroon (hidden) │
+└──────────────────────┘         └──────────────────────┘
 ```
 
-### `payment_made`
-Fires after any successful payment by Claude. Use this to update the balance display and push to the activity feed in real time.
-```json
-{
-  "event": "payment_made",
-  "data": {
-    "amount_sats": 8200,
-    "amount_usd": "7.87",
-    "purpose": "coolproject.co domain registration",
-    "balance_remaining_sats": 41800,
-    "balance_remaining_usd": "40.13",
-    "approval_type": "auto",
-    "agent_id": "agent_1"
-  },
-  "timestamp": "2026-04-11T12:00:00.000Z"
-}
-```
-`approval_type` is `"auto"` (under threshold, no user interaction) or `"manual"` (user approved via biometric).
+### Agent Budget Enforcement
 
-### `approval_requested`
-Claude needs user sign-off on a payment over the auto-pay threshold. **Show the approval modal.**
-```json
-{
-  "event": "approval_requested",
-  "data": {
-    "approval_id": "apr_3",
-    "type": "payment",
-    "amount_sats": 20000,
-    "amount_usd": "19.20",
-    "reason": "coolproject.co domain registration — $19.20",
-    "expires_at": "2026-04-11T12:10:00.000Z"
-  },
-  "timestamp": "2026-04-11T12:00:00.000Z"
-}
 ```
-Use `expires_at` for a countdown timer. Auto-dismiss the modal at expiry (server will deny after 10 minutes).
+Claude calls pay_invoice via MCP
+  → MCP server attaches scoped macaroon to LND RPC call
+  → LND RPC middleware checks: virtual balance >= amount + fees?
+    YES → payment proceeds, balance deducted
+    NO  → "insufficient balance" — payment rejected
 
-### `approval_resolved`
-Fires when an approval reaches a terminal state — user approved or denied. **Dismiss the approval modal.**
-```json
-{
-  "event": "approval_resolved",
-  "data": {
-    "approval_id": "apr_3",
-    "approved": true
-  },
-  "timestamp": "2026-04-11T12:00:30.000Z"
-}
-```
+Two escalation paths:
+  → Payment over auto-pay threshold: Claude calls request_approval
+    → User gets biometric prompt for THIS specific payment
+  → Budget exhausted: Claude calls request_topup
+    → User approves increasing the overall budget
 
-### `topup_requested`
-Claude's budget is exhausted and it's requesting more funds. **Show the top-up modal.** Same shape as `approval_requested` but `type` is `"topup"` — use a different modal/screen for this.
-```json
-{
-  "event": "topup_requested",
-  "data": {
-    "approval_id": "apr_4",
-    "amount_sats": 50000,
-    "amount_usd": "48.00",
-    "reason": "Need $48.00 more to complete the API subscription you requested",
-    "expires_at": "2026-04-11T12:10:00.000Z"
-  },
-  "timestamp": "2026-04-11T12:01:00.000Z"
-}
-```
-
-### `topup_approved`
-Fires when a top-up is approved. **Update the balance display.**
-```json
-{
-  "event": "topup_approved",
-  "data": {
-    "new_balance_sats": 100000,
-    "new_balance_usd": "96.00"
-  },
-  "timestamp": "2026-04-11T12:01:30.000Z"
-}
+Claude cannot see on-chain funds, node channels, or real balance.
+Claude cannot bake new macaroons or escalate permissions.
 ```
 
 ---
 
-## MCP Tools & Response Shapes
+## Tech Stack
 
-These tools are called by Claude, not directly by the frontend. But the response shapes feed directly into WS events and the REST API, so the frontend needs to understand them to build the matching UI states.
+| Layer | Technology |
+|-------|-----------|
+| Frontend | Next.js + Tailwind CSS |
+| Backend | Node.js + Express |
+| AI Agent | Claude (user's subscription) — no custom agent runtime |
+| MCP Server | Node.js (@modelcontextprotocol/sdk) |
+| Lightning | LND v0.18+ wrapped by litd |
+| Passkey | @simplewebauthn/browser + PRF extension |
+| Tx Signing | bitcoinjs-lib + tiny-secp256k1 (in browser, never on server) |
+| Database | SQLite (dev) / Postgres (prod) |
+| Network | Bitcoin mainnet |
 
-### `pay_invoice`
+---
 
-**Success — payment settled:**
-```json
-{
-  "success": true,
-  "amount_sats": 8200,
-  "amount_usd": "7.87",
-  "fee_sats": 9,
-  "balance_remaining_sats": 41800,
-  "balance_remaining_usd": "40.13",
-  "preimage": "a3f7...",
-  "invoice_description": "coolproject.co domain"
-}
-```
-`preimage` is the cryptographic proof of payment. If it's present, the payment is confirmed.
+## Getting Started
 
-**Success — already paid (idempotency guard):**
-```json
-{
-  "success": true,
-  "already_paid": true,
-  "amount_sats": 8200,
-  "amount_usd": "7.87",
-  "purpose": "coolproject.co domain registration",
-  "preimage": null,
-  "message": "This invoice has already been paid. No funds were moved."
-}
-```
-Show an "already settled" badge. No duplicate charge occurred.
+### Prerequisites
 
-**Security warning (prompt injection detected in invoice):**
-```json
-{
-  "success": true,
-  "invoice_description": "[description hidden]",
-  "security_warning": "The invoice description contains suspicious text that may be a prompt injection attempt. It has been hidden."
-}
-```
-Show a security warning banner in the activity feed entry for this payment.
+- Node.js 22+ (`nvm install 22`)
+- Docker + Docker Compose (for LND + litd)
 
-### `get_balance`
-```json
-{
-  "balance_sats": 50000,
-  "balance_usd": "48.00",
-  "auto_pay_threshold_sats": 15000,
-  "auto_pay_threshold_usd": "14.40"
-}
-```
-`auto_pay_threshold_sats` is the per-user configurable limit. Payments under this are auto-approved by Claude; payments over it trigger an `approval_requested` event.
+### 1. Start LND + litd (Docker)
 
-### `get_budget_status`
-```json
-{
-  "spent_today_sats": 12000,
-  "spent_today_usd": "11.52",
-  "remaining_sats": 38000,
-  "remaining_usd": "36.48",
-  "total_budget_sats": 50000,
-  "total_budget_usd": "48.00",
-  "recent_payments": [
-    {
-      "amount_sats": 8200,
-      "amount_usd": "7.87",
-      "purpose": "domain registration",
-      "approval_type": "auto",
-      "timestamp": "2026-04-11T12:00:00.000Z"
-    }
-  ]
-}
-```
-Use `spent_today_sats / total_budget_sats` to render the `AgentBudget` progress bar.
-
-### `create_invoice`
-```json
-{
-  "bolt11": "lnbc50000n1...",
-  "payment_hash": "a3f7...",
-  "expires_at": "2026-04-11T12:15:00.000Z"
-}
+```bash
+docker compose up -d
 ```
 
-### `list_payments`
-```json
-{
-  "payments": [
-    {
-      "amount_sats": 8200,
-      "amount_usd": "7.87",
-      "purpose": "domain registration",
-      "approval_type": "auto",
-      "timestamp": "2026-04-11T12:00:00.000Z"
-    }
-  ]
-}
+LND and litd run in Docker containers on mainnet.
+
+### 2. Fund the Wallet
+
+```bash
+docker exec aegis-lnd lncli newaddress p2tr
+# Send mainnet sats to this address
 ```
 
-### `request_approval` — approved
-```json
-{
-  "approved": true,
-  "approval_id": "apr_3",
-  "next_action": "User approved the payment of $19.20 USD. Now call pay_invoice with approval_id=..."
-}
+### 3. Open a Lightning Channel
+
+```bash
+docker exec aegis-lnd lncli openchannel --node_key <peer_pubkey> --local_amt 1000000
 ```
 
-### `request_approval` — denied or timed out
-```json
-{
-  "approved": false,
-  "approval_id": "apr_3",
-  "reason": "denied_by_user",
-  "instruction": "The user declined this payment. Do not retry..."
-}
-```
-`reason` is either `"denied_by_user"` or `"timeout"`.
+### 4. Start the Backend
 
-### `request_topup` — approved
-```json
-{
-  "approved": true,
-  "new_balance_sats": 100000,
-  "new_balance_usd": "96.00",
-  "next_action": "Budget increased to $96.00 USD. You can now retry the payment using pay_invoice."
-}
+```bash
+cd backend
+cp .env.example .env   # Edit with your credentials
+npm install
+npm run dev             # http://localhost:3001
 ```
 
-### `request_topup` — denied
-```json
-{
-  "approved": false,
-  "reason": "denied_by_user",
-  "instruction": "The user declined the budget top-up. Do not attempt the payment."
-}
+### 5. Start the Frontend
+
+```bash
+cd web
+npm install
+npm run dev             # http://localhost:3000
+```
+
+### Environment Variables
+
+Create `backend/.env` from the example:
+
+```bash
+LND_HOST=localhost:10009
+LND_CERT_PATH=~/.lnd/tls.cert
+LND_MACAROON_PATH=~/.lnd/data/chain/bitcoin/mainnet/admin.macaroon
+LITD_HOST=localhost:8443
+PORT=3001
+NEXT_PUBLIC_API_URL=http://localhost:3001
 ```
 
 ---
 
-## Failure States
+## Project Structure
 
-These are structured responses (not hard errors) that represent states requiring UI action. Each maps to a specific screen state or modal.
-
-### Insufficient balance
-```json
-{
-  "success": false,
-  "reason": "insufficient_balance",
-  "balance_sats": 12000,
-  "balance_usd": "11.52",
-  "invoice_amount_sats": 15000,
-  "invoice_amount_usd": "14.40",
-  "shortfall_sats": 3000,
-  "shortfall_usd": "2.88"
-}
 ```
-**UI action:** Show a top-up prompt. `shortfall_usd` is the amount to pre-fill in the top-up field.
-
-### Over auto-pay threshold
-```json
-{
-  "success": false,
-  "reason": "over_threshold",
-  "invoice_amount_sats": 20000,
-  "invoice_amount_usd": "19.20",
-  "threshold_sats": 15000,
-  "threshold_usd": "14.40"
-}
+aegis/
+├── backend/
+│   ├── src/
+│   │   ├── server.js              # Express + WebSocket server
+│   │   ├── routes/                # API endpoints (wallet, agent, ln)
+│   │   ├── services/              # LND, litd, macaroon, passkey
+│   │   ├── mcp/                   # MCP server, tools, auth, pairing
+│   │   ├── ws/                    # WebSocket notifications
+│   │   └── db/                    # Schema + data access
+│   └── scripts/                   # Infrastructure setup scripts
+├── web/
+│   ├── src/
+│   │   ├── app/                   # Next.js pages (dashboard, send, receive, agent)
+│   │   ├── lib/                   # Client-side crypto (passkey, bitcoin)
+│   │   └── components/            # UI components (balance, tx list, agent budget, pairing QR)
+│   └── public/
+├── docs/
+│   ├── PITCH_DECK.md
+│   └── DEMO_SCRIPT.md
+├── CLAUDE.md                      # Claude Code instructions
+├── PROJECT_SPEC.md                # Full technical specification
+├── CONTRIBUTING.md
+├── SECURITY.md
+└── LICENSE
 ```
-**UI action:** Show an approval modal. The `approval_requested` WS event will follow immediately.
-
-### Agent paused
-```json
-{
-  "error": "agent_paused",
-  "message": "Agent is paused by user.",
-  "instruction": "Stop all payment attempts immediately. To resume, open the Aegis web app and tap 'Resume Agent'."
-}
-```
-**UI action:** Show a "Agent Paused" banner with a "Resume" CTA.
-
-### Rate limited
-```json
-{
-  "error": "rate_limited",
-  "message": "Rate limited — max 30 tool calls per minute.",
-  "instruction": "Wait 60 seconds before trying again."
-}
-```
-**UI action:** Show a brief cooldown indicator.
 
 ---
 
-## Data Records & Fields
+## API Reference
 
-### Transaction
-```ts
-{
-  id: string               // "tx_1"
-  agent_id: string
-  type: "payment"
-  amount_sats: number
-  purpose: string          // Claude's stated reason — show in activity feed
-  bolt11: string           // Raw invoice — don't display
-  payment_hash: string     // Hex — used for idempotency; show as tx ID
-  status: "settled"
-  approval_type: "auto" | "manual"  // Badge in activity feed
-  approval_id: string | null        // Links to approval record
-  created_at: string       // ISO8601
-}
-```
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/wallet/create` | POST | Store passkey credential ID + public key (wallet creation IS identity) |
+| `/wallet/balance` | GET | Combined L1 + L2 balance |
+| `/wallet/history` | GET | Unified transaction history |
+| `/wallet/send` | POST | Send on-chain tx (user signs in browser) |
+| `/wallet/receive` | POST | Generate Lightning invoice or funding address |
+| `/agent/create` | POST | Create litd account + scoped macaroon |
+| `/agent/pair` | POST | Generate MCP pairing config + QR |
+| `/agent/topup` | POST | Increase agent budget (requires WebAuthn assertion) |
+| `/agent/pause` | POST | Freeze agent macaroon |
+| `/agent/status` | GET | Agent budget + activity log |
+| `/ln/fund` | POST | Construct unsigned tx to fund LN (client signs) |
+| `/ln/withdraw` | POST | Withdraw LN balance to on-chain address |
 
-`approval_type` badge logic for the activity feed:
-- `"auto"` → green "Auto" badge (under threshold, no user interaction needed)
-- `"manual"` → blue "Approved" badge (user biometrically signed off)
-
-### Approval
-```ts
-{
-  id: string               // "apr_1"
-  agent_id: string
-  type: "payment" | "topup"   // Different modal for each
-  amount_sats: number
-  reason: string           // Shown to user on approval screen
-  status: "pending" | "approved" | "denied"
-  expires_at: string       // ISO8601 — use for countdown
-}
-```
-
-### User
-```ts
-{
-  credential_id: string
-  auto_pay_threshold_sats: number   // Default: 15000
-  created_at: string
-}
-```
-
-`auto_pay_threshold_sats` is user-configurable from the Settings screen. Payments at or below this auto-approve; above requires biometric.
+Auth: Every request includes a WebAuthn assertion or short-lived token from a recent assertion. The passkey credential ID IS the user identity. No separate register/login flow.
 
 ---
 
-## Audit Log
+## Key Concepts
 
-`db.getAuditLog(agentId, limit)` returns a reverse-chronological log of all resolved tool calls. Feeds the agent activity feed.
+### Passkey Key Derivation
 
-```ts
-{
-  agent_id: string
-  tool: "pay_invoice" | "request_approval" | "request_topup"
-  params_summary: string   // Human-readable, e.g. "8200 sats — domain registration"
-  outcome: string          // e.g. "settled, 41800 sats remaining" | "approved" | "denied" | "timeout"
-  timestamp: string        // ISO8601
-}
+```
+WebAuthn PRF(credential, salt="aegis-wallet-v1") → 32 bytes entropy
+  → BIP39 mnemonic (never displayed) → BIP32 master key
+  → funding_key:  m/86h/0h/0h/0/0  (Taproot, mainnet — signs L1 txs)
+  → auth_key:     m/84h/0h/0h/0/0  (mainnet — L2 auth only)
 ```
 
-Tools logged: `pay_invoice` (on success), `request_approval` (on any resolution), `request_topup` (on any resolution).
+Recovery: passkey syncs via iCloud/Google → same entropy → same keys → wallet restored.
+
+### Passkey Roles Per Layer
+
+| Layer | Passkey Role | What It Does |
+|-------|-------------|-------------|
+| L1 (Funding) | **Key + Signer** | Derives private key via PRF, signs on-chain txs in browser |
+| L2 (Spending) | **Auth only** | Authenticates to backend via WebAuthn. LND holds Lightning signing keys. |
+
+### Macaroon-Scoped Agent
+
+The agent holds a litd account macaroon (via MCP server — never directly) with these permissions:
+
+| Allowed | Denied |
+|---------|--------|
+| `offchain:write` — pay Lightning invoices | `onchain:*` — no on-chain access |
+| `offchain:read` — view own payments | `peers:*` — no node topology access |
+| `invoices:write` — create invoices | `macaroon:*` — cannot bake new tokens |
+| `invoices:read` — check invoice status | Cannot see real node balance or channels |
 
 ---
 
-## Integration Notes
+## Contributing
 
-### USD amounts
-Every response includes both `_sats` and `_usd` fields for any amount. `_usd` is a pre-calculated string (e.g., `"19.20"`) — no frontend math needed. BTC price is cached at $96,000 for now (60s TTL); will be wired to a live feed before demo.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, coding standards, and pull request guidelines.
 
-### Approval modal countdown
-Both `approval_requested` and `topup_requested` include `expires_at`. The server auto-denies after 10 minutes. Use `expires_at - now` to show a countdown and auto-dismiss the modal at zero.
+---
 
-### Approval vs top-up modals
-These are distinct UX flows even though both block on user action:
-- `approval_requested` → user is approving **one specific payment** (single-use, tied to an `approval_id`)
-- `topup_requested` → user is adding **more budget** for Claude to use going forward
+## Security
 
-### Activity feed badges
-| `approval_type` | Badge | Meaning |
-|---|---|---|
-| `"auto"` | Auto | Payment was under threshold, Claude paid without asking |
-| `"manual"` | Approved | User biometrically approved this specific payment |
+Funding wallet signing keys are derived client-side and never leave the browser. On L2, the passkey authenticates but does not sign — LND holds those keys. See [SECURITY.md](SECURITY.md) for the full security model and responsible disclosure policy.
 
-### Agent lifecycle states
-| `agent.status` | Frontend state |
-|---|---|
-| `"active"` | Normal — all tools available |
-| `"paused"` | Show "Agent Paused" banner + Resume CTA. WS events for payments will not fire. |
+---
 
-### Idempotency
-If Claude retries a payment with the same invoice, `pay_invoice` returns `already_paid: true` — no duplicate charge. Show an "already settled" state rather than treating this as an error.
+## License
 
-### Security warnings
-If `security_warning` appears in a `payment_made` response, the invoice description from the merchant was flagged as a potential prompt injection attempt and hidden. Show a warning indicator on that activity feed entry.
+[MIT](LICENSE)
+
+---
+
+## References
+
+- [WebAuthn PRF Extension](https://developers.yubico.com/WebAuthn/Concepts/PRF_Extension/) — Passkey-based key derivation
+- [LND Macaroons](https://docs.lightning.engineering/lightning-network-tools/lnd/macaroons) — Scoped authentication tokens
+- [litd Accounts](https://docs.lightning.engineering/lightning-network-tools/lightning-terminal/accounts) — Virtual Lightning accounts
+- [L402 for Agents](https://lightning.engineering/posts/2026-03-11-L402-for-agents/) — Agent payment protocol
+- [Lightning Agent Tools](https://github.com/lightninglabs/lightning-agent-tools) — Claude Code skills for Lightning
+- [MCP Protocol](https://modelcontextprotocol.io/) — Model Context Protocol
+- [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) — MCP SDK
+- [Passkey PRF Spec (Breez)](https://github.com/breez/passkey-login/blob/main/spec.md) — Reference implementation
