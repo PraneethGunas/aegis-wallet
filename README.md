@@ -1,6 +1,6 @@
 # Aegis — The Agentic Bitcoin Wallet
 
-A seedless Bitcoin wallet where an AI agent spends within cryptographically enforced budgets, the user approves large payments with biometrics, and on-chain everything looks like a normal single-sig transaction.
+A seedless Bitcoin wallet where Claude is your AI financial agent — spending within cryptographically enforced Lightning budgets, hitting real budget walls, and escalating to your biometric approval when it needs more.
 
 No seed phrase. No 24 words. Your keys live in your device's secure enclave, derived from a passkey. Face ID is your signature.
 
@@ -12,26 +12,26 @@ Aegis splits custody across two layers:
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  L1: SAVINGS (Self-Custody)                     │
-│  CTV covenant vault on Bitcoin signet.          │
-│  Your passkey-derived key controls it.           │
-│  Server has ZERO access to vault funds.          │
-│  Even if our servers die, you can recover.       │
+│  L1: FUNDING WALLET (Self-Custody)              │
+│  Standard Taproot address on testnet.            │
+│  Passkey derives your key AND signs txs.         │
+│  Server has ZERO access to funding wallet.       │
 ├─────────────────────────────────────────────────┤
 │  ↕ You move funds between layers (Face ID)      │
 ├─────────────────────────────────────────────────┤
 │  L2: SPENDING (Custodial Lightning)             │
-│  LND + litd node. Agent operates here.           │
+│  LND + litd node. Claude operates here via MCP. │
+│  Passkey = auth only. LND holds signing keys.    │
 │  Macaroon-enforced budget ceiling.               │
 │  Exposure limited to spending balance only.      │
 └─────────────────────────────────────────────────┘
 ```
 
-**Layer 1 (Savings)** — A CTV covenant vault on Bitcoin Inquisition signet. Spending rules are enforced by Bitcoin consensus, not by a server. Your vault key is derived client-side from a WebAuthn passkey via the PRF extension. It never leaves your browser. Large withdrawals have a timelock with a clawback window — if something goes wrong, you can cancel.
+**Layer 1 (Funding)** — A standard Taproot address on Bitcoin testnet. Your passkey derives the private key AND signs all on-chain transactions — the passkey IS the key. It never leaves your browser. This is a simple self-custody funding wallet. No covenants, no multi-sig, no agent involvement. If our server disappears, you still have your key.
 
-**Layer 2 (Spending)** — An LND Lightning node wrapped by litd. Your AI agent gets a scoped macaroon (a cryptographic bearer token) with a hard spending ceiling enforced by LND's RPC middleware. Payments are instant. The agent can pay invoices, handle subscriptions, and tip — all within its budget. Anything above the limit triggers a biometric approval prompt.
+**Layer 2 (Spending)** — An LND Lightning node wrapped by litd. Claude gets wallet tools via an MCP server backed by a scoped macaroon (a cryptographic bearer token) with a hard spending ceiling enforced by LND's RPC middleware. Payments are instant. Claude can pay invoices, check balances, and request more budget — all within its ceiling. Anything above the limit triggers a biometric approval prompt. The passkey authenticates you to our backend on L2 but does NOT sign Lightning transactions — LND holds those keys.
 
-**Passkey (Control Plane)** — WebAuthn PRF extension derives all keys from your device's secure enclave. No seed phrase is ever generated, shown, or stored. Recovery = passkey syncs to your new device, wallet regenerates deterministically.
+**Passkey (Control Plane)** — WebAuthn PRF extension derives keys from your device's secure enclave. No seed phrase is ever generated, shown, or stored. On L1, the passkey derives the key and signs. On L2, the passkey authenticates. The passkey credential ID IS the user identity — no separate account or login. Recovery = passkey syncs to your new device, wallet regenerates deterministically.
 
 ---
 
@@ -43,10 +43,10 @@ Aegis splits custody across two layers:
 │                                                        │
 │  Secure Enclave ──→ Passkey (PRF) ──→ Key Derivation │
 │                                                        │
-│  vault_key:  m/86h/1h/0h/0/0  (Taproot, L1 signing) │
-│  auth_key:   m/84h/1h/0h/0/0  (L2 authentication)   │
+│  funding_key:  m/86h/1h/0h/0/0  (Taproot, L1 signer)│
+│  auth_key:     m/84h/1h/0h/0/0  (L2 auth only)      │
 │                                                        │
-│  CTV vault transactions signed HERE, in the browser.  │
+│  On-chain transactions signed HERE, in the browser.   │
 │  Keys NEVER sent to the server.                        │
 └──────────────────────┬───────────────────────────────┘
                        │ HTTPS / WSS
@@ -54,32 +54,29 @@ Aegis splits custody across two layers:
 │                   BACKEND SERVER                      │
 │                                                        │
 │  Node.js + Express API                                │
-│  ├── Bitcoin Inquisition (signet) ← L1 vault UTXOs   │
 │  ├── LND + litd ← L2 Lightning payments              │
-│  └── Agent Runtime ← scoped macaroon, budget-limited │
+│  ├── MCP Server ← exposes wallet tools to Claude     │
+│  └── Scoped macaroon ← budget-limited, server-side   │
 └──────────────────────────────────────────────────────┘
+
+┌──────────────────────┐         ┌──────────────────────┐
+│  Claude               │  MCP   │  Aegis MCP Server     │
+│  (Code / Cowork /     │◄──────►│  ├─ pay_invoice       │
+│   Chat + MCP)         │        │  ├─ get_balance       │
+│                        │        │  ├─ request_topup     │
+│  Claude IS the agent.  │        │  └─ macaroon (hidden) │
+└──────────────────────┘         └──────────────────────┘
 ```
-
-### CTV Vault (Taproot Script Tree)
-
-The on-chain vault uses four spending paths encoded in a Taproot script tree:
-
-| Path | Who Signs | Conditions | Use Case |
-|------|-----------|------------|----------|
-| Leaf 1 | Agent | CTV-enforced template (exact outputs) | Small autonomous spends |
-| Leaf 2 | User + Agent | CTV template + 6-block CSV delay | Large withdrawals |
-| Leaf 3 | User only | 144-block (1 day) CSV timelock | Emergency recovery |
-| Leaf 4 | User only | During Leaf 2 delay window | Clawback / cancel pending withdrawal |
-
-The keypath is a MuSig2 aggregate of user + agent keys — cooperative spends look like ordinary single-sig Taproot transactions on-chain.
 
 ### Agent Budget Enforcement
 
 ```
-Agent calls lnd.SendPayment(invoice) with its macaroon
+Claude calls pay_invoice via MCP
+  → MCP server attaches scoped macaroon to LND RPC call
   → LND RPC middleware checks: virtual balance >= amount + fees?
     YES → payment proceeds, balance deducted
     NO  → "insufficient balance" — payment rejected
+  → Claude sees the denial, calls request_topup → user gets biometric prompt
   → Agent cannot see on-chain funds, node channels, or real balance
   → Agent cannot bake new macaroons or escalate permissions
 ```
@@ -92,11 +89,13 @@ Agent calls lnd.SendPayment(invoice) with its macaroon
 |-------|-----------|
 | Frontend | Next.js + Tailwind CSS |
 | Backend | Node.js + Express |
-| Bitcoin | Bitcoin Inquisition 28.0 (signet) — CTV (BIP 119) + CSFS (BIP 348) |
+| AI Agent | Claude (user's subscription) — no custom agent runtime |
+| MCP Server | Node.js (@modelcontextprotocol/sdk) |
 | Lightning | LND v0.18+ wrapped by litd |
 | Passkey | @simplewebauthn/browser + PRF extension |
 | Tx Signing | bitcoinjs-lib + tiny-secp256k1 (in browser, never on server) |
 | Database | SQLite (dev) / Postgres (prod) |
+| Network | Bitcoin testnet |
 
 ---
 
@@ -105,48 +104,38 @@ Agent calls lnd.SendPayment(invoice) with its macaroon
 ### Prerequisites
 
 - Node.js 22+ (`nvm install 22`)
-- [Bitcoin Inquisition](https://github.com/bitcoin-inquisition/bitcoin/releases) (signet node with CTV + CSFS)
 - [LND v0.18+](https://github.com/lightningnetwork/lnd/releases)
 - [litd](https://github.com/lightninglabs/lightning-terminal/releases) (Lightning Terminal)
 
-### 1. Start the Bitcoin Node
+### 1. Start LND + litd
 
 ```bash
-bitcoind -signet \
-  -server \
-  -rpcuser=aegis \
-  -rpcpassword=<your-password> \
-  -txindex=1 \
-  -daemon
-
-# Wait for sync (~10 min on signet)
-bitcoin-cli -signet getblockchaininfo
-```
-
-### 2. Start LND + litd
-
-```bash
-litd --uipassword=<your-password> \
-     --lnd-mode=integrated \
-     --network=signet \
-     --lnd.bitcoind.rpcuser=aegis \
-     --lnd.bitcoind.rpcpass=<your-password>
+# Start LND on testnet
+lnd --bitcoin.testnet --bitcoin.node=neutrino --debuglevel=info
 
 # Create wallet (first run only)
 lncli create
+
+# Start litd (wraps LND for account system)
+litd --uipassword=<your-password> \
+     --lnd-mode=integrated \
+     --network=testnet
 ```
 
-### 3. Fund with Signet Coins
+### 2. Fund with Testnet Coins
 
-Use a [signet faucet](https://signetfaucet.com) or Bitcoin Inquisition's `contrib/signet/getcoins.sh`.
+```bash
+lncli newaddress p2tr
+# Send testnet coins to this address from a faucet
+```
 
-### 4. Open a Lightning Channel
+### 3. Open a Lightning Channel
 
 ```bash
 lncli openchannel --node_key <peer_pubkey> --local_amt 1000000
 ```
 
-### 5. Start the Backend
+### 4. Start the Backend
 
 ```bash
 cd backend
@@ -155,7 +144,7 @@ npm install
 npm run dev             # http://localhost:3001
 ```
 
-### 6. Start the Frontend
+### 5. Start the Frontend
 
 ```bash
 cd web
@@ -170,13 +159,10 @@ Create `backend/.env` from the example:
 ```bash
 LND_HOST=localhost:10009
 LND_CERT_PATH=~/.lnd/tls.cert
-LND_MACAROON_PATH=~/.lnd/data/chain/bitcoin/signet/admin.macaroon
-BITCOIN_RPC_HOST=localhost
-BITCOIN_RPC_PORT=38332
-BITCOIN_RPC_USER=aegis
-BITCOIN_RPC_PASS=<your-password>
+LND_MACAROON_PATH=~/.lnd/data/chain/bitcoin/testnet/admin.macaroon
 LITD_HOST=localhost:8443
 PORT=3001
+NEXT_PUBLIC_API_URL=http://localhost:3001
 ```
 
 ---
@@ -188,17 +174,17 @@ aegis/
 ├── backend/
 │   ├── src/
 │   │   ├── server.js              # Express + WebSocket server
-│   │   ├── routes/                # API endpoints (auth, wallet, vault, agent)
-│   │   ├── services/              # LND, litd, Bitcoin RPC, CTV, macaroon clients
-│   │   ├── agent/                 # Agent runtime, scheduler, budget tracking
+│   │   ├── routes/                # API endpoints (wallet, agent, ln)
+│   │   ├── services/              # LND, litd, macaroon, passkey
+│   │   ├── mcp/                   # MCP server, tools, auth, pairing
 │   │   ├── ws/                    # WebSocket notifications
 │   │   └── db/                    # Schema + data access
 │   └── scripts/                   # Infrastructure setup scripts
 ├── web/
 │   ├── src/
-│   │   ├── app/                   # Next.js pages (dashboard, send, receive, vault, agent)
-│   │   ├── lib/                   # Client-side crypto (passkey, bitcoin, vault-signer)
-│   │   └── components/            # UI components (balance, tx list, agent budget, modals)
+│   │   ├── app/                   # Next.js pages (dashboard, send, receive, agent)
+│   │   ├── lib/                   # Client-side crypto (passkey, bitcoin)
+│   │   └── components/            # UI components (balance, tx list, agent budget, pairing QR)
 │   └── public/
 ├── docs/
 │   ├── PITCH_DECK.md
@@ -216,20 +202,20 @@ aegis/
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/auth/register` | POST | Register a new passkey public key |
-| `/auth/login` | POST | Authenticate via WebAuthn |
+| `/wallet/create` | POST | Store passkey credential ID + public key (wallet creation IS identity) |
 | `/wallet/balance` | GET | Combined L1 + L2 balance |
 | `/wallet/history` | GET | Unified transaction history |
-| `/wallet/send` | POST | Route payment (Lightning or on-chain) |
-| `/wallet/receive` | POST | Generate Lightning invoice or vault address |
-| `/vault/deposit` | POST | Get CTV vault deposit address |
-| `/vault/withdraw` | POST | Construct unsigned CTV spend (client signs) |
-| `/vault/clawback` | POST | Construct clawback tx (client signs) |
-| `/vault/fund-ln` | POST | Move funds from vault to Lightning |
+| `/wallet/send` | POST | Send on-chain tx (user signs in browser) |
+| `/wallet/receive` | POST | Generate Lightning invoice or funding address |
 | `/agent/create` | POST | Create litd account + scoped macaroon |
-| `/agent/topup` | POST | Increase agent budget (requires biometric auth) |
+| `/agent/pair` | POST | Generate MCP pairing config + QR |
+| `/agent/topup` | POST | Increase agent budget (requires WebAuthn assertion) |
 | `/agent/pause` | POST | Freeze agent macaroon |
 | `/agent/status` | GET | Agent budget + activity log |
+| `/ln/fund` | POST | Construct unsigned tx to fund LN (client signs) |
+| `/ln/withdraw` | POST | Withdraw LN balance to on-chain address |
+
+Auth: Every request includes a WebAuthn assertion or short-lived token from a recent assertion. The passkey credential ID IS the user identity. No separate register/login flow.
 
 ---
 
@@ -240,15 +226,22 @@ aegis/
 ```
 WebAuthn PRF(credential, salt="aegis-wallet-v1") → 32 bytes entropy
   → BIP39 mnemonic (never displayed) → BIP32 master key
-  → vault_key:  m/86h/1h/0h/0/0  (Taproot, signet)
-  → auth_key:   m/84h/1h/0h/0/0  (SegWit, signet)
+  → funding_key:  m/86h/1h/0h/0/0  (Taproot, testnet — signs L1 txs)
+  → auth_key:     m/84h/1h/0h/0/0  (testnet — L2 auth only)
 ```
 
 Recovery: passkey syncs via iCloud/Google → same entropy → same keys → wallet restored.
 
+### Passkey Roles Per Layer
+
+| Layer | Passkey Role | What It Does |
+|-------|-------------|-------------|
+| L1 (Funding) | **Key + Signer** | Derives private key via PRF, signs on-chain txs in browser |
+| L2 (Spending) | **Auth only** | Authenticates to backend via WebAuthn. LND holds Lightning signing keys. |
+
 ### Macaroon-Scoped Agent
 
-The agent holds a litd account macaroon with these permissions:
+The agent holds a litd account macaroon (via MCP server — never directly) with these permissions:
 
 | Allowed | Denied |
 |---------|--------|
@@ -256,10 +249,6 @@ The agent holds a litd account macaroon with these permissions:
 | `offchain:read` — view own payments | `peers:*` — no node topology access |
 | `invoices:write` — create invoices | `macaroon:*` — cannot bake new tokens |
 | `invoices:read` — check invoice status | Cannot see real node balance or channels |
-
-### Clawback Mechanism
-
-Large vault withdrawals (Leaf 2) have a 6-block CSV delay before settlement. During this window, the user can broadcast a clawback transaction (Leaf 4) to cancel the withdrawal and return funds to the vault. This is enforced by Bitcoin Script — no server can override it.
 
 ---
 
@@ -271,7 +260,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, coding standards, 
 
 ## Security
 
-Vault signing keys are derived client-side and never leave the browser. See [SECURITY.md](SECURITY.md) for the full security model and responsible disclosure policy.
+Funding wallet signing keys are derived client-side and never leave the browser. On L2, the passkey authenticates but does not sign — LND holds those keys. See [SECURITY.md](SECURITY.md) for the full security model and responsible disclosure policy.
 
 ---
 
@@ -283,13 +272,11 @@ Vault signing keys are derived client-side and never leave the browser. See [SEC
 
 ## References
 
-- [CTV (BIP 119)](https://bitcoinops.org/en/topics/op_checktemplateverify/) — `OP_CHECKTEMPLATEVERIFY` specification
-- [CSFS (BIP 348)](https://bitcoinops.org/en/topics/op_checksigfromstack/) — `OP_CHECKSIGFROMSTACK` specification
-- [Bitcoin Inquisition](https://github.com/bitcoin-inquisition/bitcoin/releases) — Signet fork with CTV + CSFS active
 - [WebAuthn PRF Extension](https://developers.yubico.com/WebAuthn/Concepts/PRF_Extension/) — Passkey-based key derivation
 - [LND Macaroons](https://docs.lightning.engineering/lightning-network-tools/lnd/macaroons) — Scoped authentication tokens
 - [litd Accounts](https://docs.lightning.engineering/lightning-network-tools/lightning-terminal/accounts) — Virtual Lightning accounts
 - [L402 for Agents](https://lightning.engineering/posts/2026-03-11-L402-for-agents/) — Agent payment protocol
 - [Lightning Agent Tools](https://github.com/lightninglabs/lightning-agent-tools) — Claude Code skills for Lightning
-- [MuSig2 (BIP 327)](https://bitcoinops.org/en/topics/musig/) — Aggregate key signing
+- [MCP Protocol](https://modelcontextprotocol.io/) — Model Context Protocol
+- [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) — MCP SDK
 - [Passkey PRF Spec (Breez)](https://github.com/breez/passkey-login/blob/main/spec.md) — Reference implementation

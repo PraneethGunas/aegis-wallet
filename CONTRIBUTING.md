@@ -9,7 +9,6 @@ Aegis is an open-source project and we welcome contributions from the community.
 ### Prerequisites
 
 - **Node.js 22+** — `nvm install 22 && nvm use 22`
-- **Bitcoin Inquisition** — [Download](https://github.com/bitcoin-inquisition/bitcoin/releases) the signet node with CTV + CSFS support
 - **LND v0.18+** — [Download](https://github.com/lightningnetwork/lnd/releases)
 - **litd** — [Download](https://github.com/lightninglabs/lightning-terminal/releases) (Lightning Terminal, wraps LND)
 
@@ -49,11 +48,11 @@ The web app runs at `http://localhost:3000`, the API at `http://localhost:3001`.
 
 | Directory | What Lives Here |
 |-----------|----------------|
-| `backend/src/routes/` | Express API route handlers |
-| `backend/src/services/` | LND, litd, Bitcoin RPC, CTV transaction construction |
-| `backend/src/agent/` | Agent runtime, scheduler, budget tracking |
+| `backend/src/routes/` | Express API route handlers (wallet, agent, ln) |
+| `backend/src/services/` | LND, litd, macaroon, passkey clients |
+| `backend/src/mcp/` | MCP server, tool definitions, agent auth, pairing |
 | `web/src/app/` | Next.js pages |
-| `web/src/lib/` | Client-side crypto (passkey derivation, vault signing) |
+| `web/src/lib/` | Client-side crypto (passkey derivation, tx signing) |
 | `web/src/components/` | React UI components |
 | `docs/` | Pitch deck, demo script |
 
@@ -109,9 +108,9 @@ If you're adding a new feature, include tests. If you're fixing a bug, add a tes
 
 These are enforced in code review and CI. PRs that violate them will be rejected:
 
-1. **Vault signing keys (L1) stay client-side.** Never send private keys, mnemonics, PRF entropy, or xprv values to the server. All CTV vault transactions are signed in the browser.
+1. **Funding wallet keys (L1) stay client-side.** Never send private keys, mnemonics, PRF entropy, or xprv values to the server. All on-chain transactions are signed in the browser using the passkey-derived key.
 2. **Never log secrets.** No private keys, macaroon hex, PRF output, or mnemonics in console.log, error messages, or analytics.
-3. **Agent operates on L2 only.** The agent runtime must not have access to on-chain keys, vault UTXOs, or the ability to bake new macaroons.
+3. **Agent operates on L2 only via MCP.** The MCP server tools must not have access to L1 keys, funding wallet UTXOs, or the ability to bake new macaroons.
 4. **No `.env` files, macaroon files, or credentials in commits.** The `.gitignore` covers these — don't override it.
 
 ### Code Style
@@ -133,9 +132,10 @@ These are enforced in code review and CI. PRs that violate them will be rejected
 
 Here are some areas where contributions would be especially valuable:
 
-- **CTV + CSFS transaction construction** — building and testing the Taproot script tree
+- **MCP server tools** — implementing and testing the 6 wallet tools Claude uses
 - **WebAuthn PRF compatibility** — testing across browsers and platforms
 - **Lightning integration testing** — simulated multi-node environments
+- **Agent pairing flow** — QR code generation, config management, deep links
 - **Frontend UI/UX** — dashboard design, responsive layout, accessibility
 - **Documentation** — setup guides for different platforms, architecture deep-dives
 - **Security review** — cryptographic code audit, threat modeling

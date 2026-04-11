@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A seedless Bitcoin wallet with two-layer custody: L1 self-custodial CTV covenant vault + L2 custodial Lightning with macaroon-enforced agent budgets. User authenticates with passkeys (WebAuthn PRF). AI agent operates autonomously on L2 within cryptographic spending limits.
+A seedless Bitcoin wallet where Claude is the AI financial agent. Two-layer custody: L1 self-custodial standard Taproot address + L2 custodial Lightning with macaroon-enforced budgets. Claude operates on L2 via MCP server — no custom agent runtime. User authenticates with passkeys (WebAuthn PRF).
 
 Full spec: `PROJECT_SPEC.md`
 
@@ -11,16 +11,26 @@ Full spec: `PROJECT_SPEC.md`
 ## Architecture (TL;DR)
 
 ```
-L1 (Savings, SELF-CUSTODY):  CTV vault on Bitcoin Inquisition signet
-                              User signs in browser via passkey-derived key
-                              Server has ZERO access to vault funds
+L1 (Funding, SELF-CUSTODY):  Standard Taproot address (P2TR, BIP 86) on testnet
+                              Passkey derives the key AND signs on-chain txs
+                              Server has ZERO access to funding wallet
+                              No agent, no co-signer, no covenants
 
 L2 (Spending, CUSTODIAL):    LND + litd on our server
-                              Agent gets scoped macaroon with budget ceiling
+                              Claude gets wallet tools via MCP server
+                              Scoped macaroon stays server-side (Claude never sees it)
                               User explicitly funds L2 from L1
+                              Self-custodial option: user runs own LND node
+
+Agent (Claude via MCP):      MCP server exposes: pay_invoice, get_balance,
+                              get_budget_status, request_topup, create_invoice,
+                              list_payments
+                              Claude IS the agent — no custom bot code
+                              Budget enforced by LND RPC middleware (macaroon)
 
 Control Plane:               WebAuthn passkey (PRF extension)
-                              Derives vault key (L1) + auth key (L2)
+                              L1: derives signing key (passkey IS the key)
+                              L2: authentication only (passkey approves actions)
                               No seed phrase ever shown to user
 ```
 
@@ -30,11 +40,12 @@ Control Plane:               WebAuthn passkey (PRF extension)
 
 - **Frontend:** Next.js (React) + Tailwind CSS — web app is primary target
 - **Backend:** Node.js + Express — REST API + WebSocket
-- **Bitcoin:** Bitcoin Inquisition 28.0 (signet) — CTV (BIP 119) + CSFS (BIP 348)
-- **Lightning:** LND v0.18+ wrapped by litd — accounts, macaroon bakery
+- **MCP Server:** Node.js (MCP SDK) — exposes wallet tools to Claude, holds scoped macaroon
+- **AI Agent:** Claude (user's existing subscription) — no custom agent runtime
+- **Lightning:** LND v0.18+ wrapped by litd — accounts, macaroon bakery, RPC middleware
 - **Passkey:** @simplewebauthn/browser + PRF extension (client-side key derivation)
 - **Tx Signing:** bitcoinjs-lib + bip39 + tiny-secp256k1 (in browser, never on server)
-- **Database:** SQLite or Postgres — user accounts, agent configs, vault UTXOs, tx history
+- **Database:** SQLite or Postgres — user accounts, agent configs, tx history
 - **Mobile (stretch):** React Native + Expo
 
 ---
@@ -48,34 +59,28 @@ aegis/
 ├── backend/
 │   ├── package.json
 │   ├── src/
-│   │   ├── server.js              # Express + WebSocket
+│   │   ├── server.js              # Express API server + WebSocket
 │   │   ├── routes/
-│   │   │   ├── auth.js            # WebAuthn register + login
-│   │   │   ├── wallet.js          # Balance, send/receive, history
-│   │   │   ├── vault.js           # CTV vault: deposit, withdraw, clawback, fund-ln
-│   │   │   └── agent.js           # Agent: create, topup, pause, status
+│   │   │   ├── wallet.js          # Create wallet, balance, send/receive, history
+│   │   │   └── agent.js           # Agent: create, pair, topup, pause, status
 │   │   ├── services/
 │   │   │   ├── lnd.js             # LND gRPC client
 │   │   │   ├── litd.js            # litd account management
-│   │   │   ├── bitcoin.js         # Bitcoin Inquisition RPC
-│   │   │   ├── ctv.js             # CTV + CSFS tx construction
-│   │   │   ├── vault.js           # Taproot script tree builder
 │   │   │   ├── macaroon.js        # Macaroon baking + attenuation
-│   │   │   └── passkey.js         # WebAuthn server-side verification
-│   │   ├── agent/
-│   │   │   ├── runtime.js         # Agent main loop
-│   │   │   ├── scheduler.js       # Recurring payment scheduler
-│   │   │   ├── budget.js          # Budget tracking + top-up requests
-│   │   │   └── tasks.js           # Task definitions
+│   │   │   └── passkey.js         # WebAuthn assertion verification (passkey = identity)
+│   │   ├── mcp/
+│   │   │   ├── server.js          # MCP server (stdio or SSE transport)
+│   │   │   ├── tools.js           # Tool definitions: pay_invoice, get_balance, etc.
+│   │   │   ├── auth.js            # Agent auth token validation + rate limiting
+│   │   │   └── pairing.js         # QR code / config generation for Claude pairing
 │   │   ├── ws/
-│   │   │   └── notifications.js   # WebSocket server
+│   │   │   └── notifications.js   # WebSocket server for live updates
 │   │   └── db/
-│   │       ├── schema.sql
-│   │       └── index.js
+│   │       ├── schema.sql         # User accounts, agent configs, tx history
+│   │       └── index.js           # Database access layer
 │   └── scripts/
-│       ├── setup-lnd.sh
-│       ├── setup-inquisition.sh
-│       └── fund-wallet.sh
+│       ├── setup-lnd.sh           # LND + litd setup script
+│       └── fund-wallet.sh         # Get testnet coins from faucet
 ├── web/                            # Next.js (primary frontend)
 │   ├── package.json
 │   ├── next.config.js
@@ -84,25 +89,22 @@ aegis/
 │   │   ├── app/
 │   │   │   ├── layout.jsx
 │   │   │   ├── page.jsx           # Landing / onboarding
-│   │   │   ├── dashboard/page.jsx # Main wallet view
+│   │   │   ├── dashboard/page.jsx # Main wallet dashboard
 │   │   │   ├── send/page.jsx
 │   │   │   ├── receive/page.jsx
-│   │   │   ├── vault/page.jsx     # Vault management
-│   │   │   ├── agent/page.jsx     # Agent dashboard
+│   │   │   ├── agent/page.jsx     # Agent: pair Claude, budget, activity, pause
 │   │   │   └── settings/page.jsx
 │   │   ├── lib/
 │   │   │   ├── passkey.js         # WebAuthn PRF key derivation (CLIENT-SIDE)
-│   │   │   ├── bitcoin.js         # bitcoinjs-lib key derivation (CLIENT-SIDE)
-│   │   │   ├── vault-signer.js    # CTV vault tx signing (CLIENT-SIDE, keys never leave browser)
-│   │   │   ├── api.js             # REST client
-│   │   │   └── ws.js              # WebSocket client
+│   │   │   ├── bitcoin.js         # bitcoinjs-lib: key derivation, tx signing (CLIENT-SIDE)
+│   │   │   ├── api.js             # Backend REST API client
+│   │   │   └── ws.js              # WebSocket client for live updates
 │   │   └── components/
 │   │       ├── Balance.jsx        # Unified L1+L2 balance (USD primary)
 │   │       ├── TxList.jsx         # Transaction history (agent-tagged)
-│   │       ├── AgentBudget.jsx    # Budget progress bar
-│   │       ├── ApprovalModal.jsx  # Biometric approval modal
-│   │       ├── VaultStatus.jsx    # Vault balance + pending withdrawals
-│   │       └── ClawbackTimer.jsx  # Countdown for clawback window
+│   │       ├── AgentBudget.jsx    # Agent budget progress bar
+│   │       ├── ApprovalModal.jsx  # Biometric approval for budget top-ups
+│   │       └── PairingQR.jsx      # QR code for Claude pairing
 │   └── public/
 └── docs/
     ├── PITCH_DECK.md
@@ -113,9 +115,10 @@ aegis/
 
 ## Critical Security Rules
 
-- **Vault signing keys (L1) are derived client-side via WebAuthn PRF and NEVER sent to the server.** All CTV vault transactions are signed in the browser.
+- **L1 funding key is derived AND used for signing client-side via WebAuthn PRF — NEVER sent to the server.** The passkey is both the key derivation source and the signing mechanism. All on-chain transactions are signed in the browser.
+- **On L2, the passkey is for authentication only.** It proves the user's identity to our backend (for creating agents, approving top-ups, withdrawing). LND holds the Lightning signing keys. The user does not sign Lightning transactions.
 - **Never log, store, or transmit mnemonics, xprv values, or raw PRF entropy.** These exist only in browser memory during signing, then are discarded.
-- **Agent operates on L2 only.** It holds a scoped macaroon. It cannot access L1 vault, see node topology, or bake new macaroons.
+- **Agent operates on L2 only.** It holds a scoped macaroon via MCP — an authorization token, not a signing key. It cannot access L1 funds, see node topology, or bake new macaroons.
 - **Never commit `.env` files, macaroon files, or any secrets to git.**
 
 ---
@@ -124,8 +127,8 @@ aegis/
 
 - **Node.js:** v22.17.0 (via nvm)
 - **npm:** 11.6.0
-- **Network:** Bitcoin Inquisition signet (CTV+CSFS active)
-- **nunchuk-cli:** v0.1.0 (installed globally) — fallback if CTV hits blockers
+- **Network:** testnet (Bitcoin testnet for hackathon)
+- **nunchuk-cli:** v0.1.0 (installed globally) — fallback L1 custody model
 - **Nunchuk auth:** praneethgunasekaran@gmail.com
 
 ### Environment Variables (backend/.env)
@@ -133,11 +136,7 @@ aegis/
 ```bash
 LND_HOST=localhost:10009
 LND_CERT_PATH=~/.lnd/tls.cert
-LND_MACAROON_PATH=~/.lnd/data/chain/bitcoin/signet/admin.macaroon
-BITCOIN_RPC_HOST=localhost
-BITCOIN_RPC_PORT=38332
-BITCOIN_RPC_USER=aegis
-BITCOIN_RPC_PASS=aegis123
+LND_MACAROON_PATH=~/.lnd/data/chain/bitcoin/testnet/admin.macaroon
 LITD_HOST=localhost:8443
 PORT=3001
 NEXT_PUBLIC_API_URL=http://localhost:3001
@@ -152,70 +151,113 @@ NEXT_PUBLIC_API_URL=http://localhost:3001
 ```
 PRF(passkey_credential, salt="aegis-wallet-v1") → 32 bytes
 → BIP39 mnemonic (never shown) → BIP32 master key
-→ vault_key:   m/86h/1h/0h/0/0  (Taproot, signet)
-→ signing_key: m/84h/1h/0h/0/0  (Native SegWit, signet)
-→ nonce_seed:  HMAC-SHA256(master, "aegis-nonce-chain")
+→ funding_key:  m/86h/1h/0h/0/0  (Taproot, testnet) — SIGNS L1 txs
+→ auth_key:     m/84h/1h/0h/0/0  (Native SegWit, for L2 auth only)
 ```
 
-### CTV Vault (Taproot Script Tree)
+**Passkey role per layer:**
+- **L1 (Funding):** Passkey derives the private key AND signs on-chain transactions.
+  The passkey IS the key. No other signer exists.
+- **L2 (Spending):** Passkey authenticates the user to our backend (WebAuthn ceremony).
+  LND holds the Lightning signing keys. User does not sign LN txs.
+
+### L1 Funding Wallet (Standard Taproot)
 
 ```
-Keypath: MuSig2(user_vault_key, agent_key) — cooperative spend
+Address type: P2TR (Taproot, BIP 86)
+Key:          funding_key = master / 86h / 1h / 0h / 0 / 0
+Network:      testnet (hackathon), mainnet (production)
 
-Leaf 1: Agent small spend
-  <agent_key> CHECKSIG + <template_hash> CTV
-  → CTV enforces exact outputs. No timelock.
+Operations:
+  - Receive: backend returns the Taproot address
+  - Fund L2: user signs tx in browser → sends to LND's on-chain address
+  - Send to address: user signs tx in browser → standard payment
+  - Balance: backend queries testnet node for UTXO set
 
-Leaf 2: User + agent large spend
-  2-of-2 CHECKSIG + <template_hash> CTV
-  → CSV 6-block delay before settlement
-
-Leaf 3: User emergency sweep
-  <user_vault_key> CHECKSIG + CSV 144 blocks (1 day)
-  → User alone, last resort recovery
-
-Leaf 4: Clawback (during Leaf 2 delay)
-  <user_vault_key> CHECKSIG
-  → Cancels pending large withdrawal
+No agent. No server-side key. No covenants.
+Passkey-derived key signs all L1 transactions in the browser.
 ```
 
-### Lightning Agent (litd accounts)
+### L2 Lightning (Macaroon Budget Enforcement)
+
+```
+litd account system creates a virtual balance ledger inside LND.
+Each agent gets an account with a budget ceiling + scoped macaroon.
+
+When Claude calls pay_invoice via MCP:
+  1. MCP server calls LND SendPaymentV2 with agent's scoped macaroon
+  2. LND RPC middleware intercepts BEFORE routing
+  3. Checks: account.balance >= invoice_amount + estimated_fees?
+     YES → routes payment, deducts from virtual balance
+     NO  → returns error "insufficient balance" — never even attempts to route
+  4. MCP server returns result to Claude
+
+Enforcement is at the LND RPC layer — not in our code.
+```
 
 ```bash
-# Create agent account
+# Create agent account with budget
 litcli accounts create 50000 --save_to /tmp/agent.macaroon
 
 # Agent macaroon permissions:
 # ✓ offchain:write, offchain:read, invoices:write, invoices:read
 # ✗ onchain:*, peers:*, macaroon:*
+```
 
-# Enforcement: LND RPC middleware checks virtual balance on every payment
+### MCP Server + Claude as Agent
+
+```
+MCP Server (Node.js, @modelcontextprotocol/sdk):
+  Tools exposed to Claude:
+  - pay_invoice(bolt11, purpose)       → pay LN invoice within budget
+  - create_invoice(amount_sats, memo)  → generate invoice to receive
+  - get_balance()                      → read agent's budget balance
+  - get_budget_status()                → remaining budget + spend history
+  - request_topup(amount_sats, reason) → ask user for more budget (WS → biometric)
+  - list_payments(limit)               → agent's own payment history
+
+  NOT exposed to Claude:
+  - No on-chain tools (L1 funding wallet invisible to Claude)
+  - No macaroon access (held server-side only)
+  - No node info (topology, channels, real balance)
+```
+
+### Agent Pairing Flow
+
+```
+1. User creates agent account in web app (litd account + scoped macaroon)
+2. Web app shows QR code: MCP server URI + auth token
+3. User scans QR / pastes config into Claude Code or Cowork
+4. Claude now has wallet tools — macaroon stays server-side
+5. Revoke: tap "Pause Agent" → macaroon frozen instantly
 ```
 
 ### API Endpoints
 
 ```
-POST /auth/register     — register passkey public key
-POST /auth/login        — WebAuthn authentication
+POST /wallet/create     — store passkey credential ID + public key (wallet creation IS identity)
 GET  /wallet/balance    — combined L1+L2 balance
 GET  /wallet/history    — unified tx history
-POST /wallet/send       — route payment (LN or on-chain)
-POST /wallet/receive    — generate LN invoice or vault address
-POST /vault/deposit     — return CTV vault address
-POST /vault/withdraw    — construct unsigned CTV spend (client signs)
-POST /vault/clawback    — construct clawback tx (client signs)
-POST /vault/fund-ln     — vault → LN channel (on-chain, client signs)
+POST /wallet/send       — send on-chain tx (user signs in browser)
+POST /wallet/receive    — generate LN invoice or funding address
 POST /agent/create      — create litd account + macaroon
-POST /agent/topup       — increase agent budget (requires auth)
+POST /agent/pair        — generate MCP pairing config + QR
+POST /agent/topup       — increase agent budget (WebAuthn assertion)
 POST /agent/pause       — freeze agent macaroon
 GET  /agent/status      — budget + activity
+POST /ln/fund           — construct unsigned tx to fund LN (client signs)
+POST /ln/withdraw       — withdraw LN balance → on-chain address
+
+Auth: Every request includes a WebAuthn assertion or a short-lived token
+from a recent assertion. The passkey credential ID IS the user identity.
+No separate register/login flow.
 ```
 
 ---
 
 ## Nunchuk CLI (Fallback for L1)
 
-If Bitcoin Inquisition / CTV setup hits blockers, use Nunchuk's platform key for L1 policy enforcement on testnet:
+If the standard Taproot approach needs policy enforcement without covenants, use Nunchuk's platform key for L1 policy enforcement on testnet:
 
 ```bash
 nunchuk sandbox create --name "Aegis Vault" --m 2 --n 3
@@ -227,7 +269,7 @@ nunchuk sandbox platform-key set-policy <sandbox-id> \
 nunchuk sandbox finalize <sandbox-id>
 ```
 
-Full Nunchuk CLI reference: see git history for previous CLAUDE.md version, or `nunchuk --help`.
+Full Nunchuk CLI reference: `nunchuk --help`.
 
 ### Nunchuk Agent Skills (Global, ~/.claude/skills/)
 
@@ -245,42 +287,42 @@ Full Nunchuk CLI reference: see git history for previous CLAUDE.md version, or `
 ## POC Scope (Must Have for Demo Day)
 
 1. Passkey wallet creation (WebAuthn PRF, no seed phrase)
-2. CTV vault on Inquisition signet (Taproot script tree, client-side signing)
-3. Vault deposit + balance display
-4. Fund Lightning from vault (biometric approval)
-5. Agent with macaroon-enforced budget (L2)
-6. Agent budget enforcement (overspend denied)
-7. User approval for large L2 payment (websocket + biometric)
-8. Unified balance display (L1 savings + L2 spending, USD)
-9. Vault clawback demo (timelock + cancel)
+2. Funding address (L1) — Taproot from passkey-derived key, receive testnet BTC, display balance
+3. Fund Lightning from funding wallet (biometric approval, passkey signs in browser)
+4. MCP server with wallet tools (pay_invoice, get_balance, get_budget_status, request_topup, create_invoice, list_payments)
+5. Agent pairing flow (QR/config → Claude connected via MCP, macaroon stays server-side)
+6. Claude makes autonomous payment within budget
+7. Budget enforcement (Claude overspends → denied by LND middleware → escalates)
+8. User approval for budget top-up (websocket + biometric)
+9. Unified balance display (L1 funding + L2 spending, USD primary)
 
 ### Nice to Have
 
-- CSFS dynamic amounts
-- Agent delegation (attenuated sub-macaroons)
+- Agent delegation (Claude attenuates macaroon, creates sub-agent accounts)
 - Mobile app (React Native + Expo)
-- BIP 89 blind signing
-- Silent Payments (BIP 352)
+- L402 API payments (Claude auto-pays paywalls)
+- Airgapped QR pairing (credentials via camera only)
+- Self-custodial L2 (user runs own LND node)
 
 ---
 
 ## Infrastructure Setup
 
 ```bash
-# 1. Bitcoin Inquisition signet
-bitcoind -signet -server -rpcuser=aegis -rpcpassword=aegis123 -txindex=1 -daemon
+# 1. Start LND on testnet
+lnd --bitcoin.testnet --bitcoin.node=neutrino --debuglevel=info
 
-# 2. LND
-lnd --bitcoin.signet --bitcoin.node=bitcoind \
-    --bitcoind.rpchost=localhost --bitcoind.rpcuser=aegis --bitcoind.rpcpass=aegis123
-
-# 3. litd (wraps LND)
-litd --uipassword=aegis123 --lnd-mode=integrated --network=signet
-
-# 4. Create LND wallet
+# 2. Create LND wallet
 lncli create
 
-# 5. Open channel (after funding with signet coins)
+# 3. Start litd (wraps LND for account system)
+litd --uipassword=aegis123 --lnd-mode=integrated --network=testnet
+
+# 4. Get testnet coins
+lncli newaddress p2tr
+# Send testnet coins to this address from faucet
+
+# 5. Open channel (after funding)
 lncli openchannel --node_key <peer_pubkey> --local_amt 1000000
 
 # 6. Backend
@@ -342,7 +384,7 @@ Source: [github.com/nunchuk-io/agent-skills](https://github.com/nunchuk-io/agent
 | `nunchuk-wallet-management` | List/inspect/export/recover wallets | Wallet operations |
 | `nunchuk-wallet-transactions` | Create/sign/broadcast transactions | Sending bitcoin |
 
-**When to use Nunchuk skills:** Only if Bitcoin Inquisition / CTV setup hits blockers. These provide a fallback L1 custody model using Nunchuk's platform key instead of CTV covenants. See "Nunchuk CLI (Fallback for L1)" section above.
+**When to use Nunchuk skills:** Only if the standard Taproot + Lightning approach hits blockers. These provide a fallback L1 custody model using Nunchuk's platform key for policy enforcement.
 
 ---
 
@@ -354,10 +396,9 @@ Source: [github.com/nunchuk-io/agent-skills](https://github.com/nunchuk-io/agent
 - [litd Accounts](https://docs.lightning.engineering/lightning-network-tools/lightning-terminal/accounts)
 - [L402 for Agents](https://lightning.engineering/posts/2026-03-11-L402-for-agents/)
 - [Lightning Agent Tools](https://github.com/lightninglabs/lightning-agent-tools)
-- [CTV (BIP 119)](https://bitcoinops.org/en/topics/op_checktemplateverify/)
-- [CSFS (BIP 348)](https://bitcoinops.org/en/topics/op_checksigfromstack/)
-- [Bitcoin Inquisition](https://github.com/bitcoin-inquisition/bitcoin/releases)
+- [MCP Protocol](https://modelcontextprotocol.io/)
+- [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)
+- [WebAuthn PRF](https://developers.yubico.com/WebAuthn/Concepts/PRF_Extension/)
 - [Nunchuk CLI](https://github.com/nunchuk-io/nunchuk-cli)
 - [Nunchuk Agent Skills](https://github.com/nunchuk-io/agent-skills)
-- [WebAuthn PRF](https://developers.yubico.com/WebAuthn/Concepts/PRF_Extension/)
 - [bolt402 SDK](https://github.com/lightninglabs/bolt402) — L402 client SDK (Rust/TS/Python/Go)
