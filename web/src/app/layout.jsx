@@ -1,5 +1,6 @@
 import "./globals.css";
 import Navigation from "@/components/Navigation";
+import { WalletProvider } from "@/lib/store";
 
 export const metadata = {
   title: "Aegis — Bitcoin Wallet",
@@ -10,7 +11,9 @@ export default function RootLayout({ children }) {
   return (
     <html lang="en">
       <body>
-        <Navigation>{children}</Navigation>
+        <WalletProvider>
+          <Navigation>{children}</Navigation>
+        </WalletProvider>
       </body>
     </html>
   );
