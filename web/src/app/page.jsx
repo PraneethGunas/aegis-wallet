@@ -1,26 +1,44 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Fingerprint, Shield, Zap } from "lucide-react";
+import { Fingerprint, Shield, Zap, Loader2 } from "lucide-react";
 import { motion } from "motion/react";
+import { useWallet } from "@/lib/store";
 
 export default function Welcome() {
   const router = useRouter();
+  const { createWallet, authenticate, error } = useWallet();
+  const [loading, setLoading] = useState(null); // "create" | "open" | null
 
-  const handleCreateWallet = () => {
-    // TODO: Trigger WebAuthn passkey creation → passkey.createWallet()
-    router.push("/dashboard");
+  const handleCreateWallet = async () => {
+    setLoading("create");
+    try {
+      await createWallet();
+      router.push("/dashboard");
+    } catch {
+      // Error is set in context
+    } finally {
+      setLoading(null);
+    }
   };
 
-  const handleOpenWallet = () => {
-    // TODO: Trigger WebAuthn passkey authentication → passkey.authenticate()
-    router.push("/dashboard");
+  const handleOpenWallet = async () => {
+    setLoading("open");
+    try {
+      await authenticate();
+      router.push("/dashboard");
+    } catch {
+      // Error is set in context
+    } finally {
+      setLoading(null);
+    }
   };
 
   return (
     <div className="min-h-screen bg-background text-foreground">
       <section className="relative h-screen flex items-center overflow-hidden">
-        {/* Background gradient (no external image dependency) */}
+        {/* Background gradient */}
         <div className="absolute inset-0">
           <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-background to-secondary/10" />
           <div className="absolute inset-0 bg-gradient-to-r from-background via-background/90 to-transparent" />
@@ -73,6 +91,17 @@ export default function Welcome() {
               simple.
             </motion.p>
 
+            {/* Error message */}
+            {error && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mb-6 p-4 rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-sm"
+              >
+                {error}
+              </motion.div>
+            )}
+
             {/* CTA Buttons */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
@@ -84,7 +113,8 @@ export default function Welcome() {
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={handleCreateWallet}
-                className="group relative px-8 py-4 rounded-2xl bg-gradient-to-r from-primary to-primary/90 text-primary-foreground overflow-hidden"
+                disabled={!!loading}
+                className="group relative px-8 py-4 rounded-2xl bg-gradient-to-r from-primary to-primary/90 text-primary-foreground overflow-hidden disabled:opacity-70"
               >
                 <motion.div
                   className="absolute inset-0 bg-white/20"
@@ -93,13 +123,17 @@ export default function Welcome() {
                   style={{ borderRadius: "inherit" }}
                 />
                 <span className="relative flex items-center justify-center gap-3 text-lg">
-                  <motion.div
-                    animate={{ scale: [1, 1.1, 1] }}
-                    transition={{ duration: 1.5, repeat: Infinity }}
-                  >
-                    <Fingerprint className="w-5 h-5" />
-                  </motion.div>
-                  Create Wallet
+                  {loading === "create" ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <motion.div
+                      animate={{ scale: [1, 1.1, 1] }}
+                      transition={{ duration: 1.5, repeat: Infinity }}
+                    >
+                      <Fingerprint className="w-5 h-5" />
+                    </motion.div>
+                  )}
+                  {loading === "create" ? "Creating..." : "Create Wallet"}
                 </span>
               </motion.button>
 
@@ -107,9 +141,13 @@ export default function Welcome() {
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={handleOpenWallet}
-                className="px-8 py-4 rounded-2xl border border-border text-foreground hover:bg-muted transition-colors text-lg"
+                disabled={!!loading}
+                className="px-8 py-4 rounded-2xl border border-border text-foreground hover:bg-muted transition-colors text-lg disabled:opacity-70 flex items-center justify-center gap-3"
               >
-                Open Wallet
+                {loading === "open" && (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                )}
+                {loading === "open" ? "Authenticating..." : "Open Wallet"}
               </motion.button>
             </motion.div>
 
