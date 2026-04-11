@@ -22,6 +22,7 @@ tls.key
 # LND / Lightning
 .lnd/
 .litd/
+backend/certs/
 
 # Debug & logs
 npm-debug.log*

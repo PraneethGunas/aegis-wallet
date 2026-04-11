@@ -10,9 +10,9 @@
  * Swap the three imports below to wire up real services for production.
  */
 import { z } from "zod";
-import * as lnd from "../mocks/lnd.js";
-import * as litd from "../mocks/litd.js";
-import * as db from "../mocks/db.js";
+import * as lnd from "../services/lnd.js";
+import * as litd from "../services/litd.js";
+import * as db from "../db/index.js";
 import { AgentError } from "./auth.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
