@@ -16,6 +16,7 @@ import { wordlist } from "@scure/bip39/wordlists/english.js";
 // Active key material (held in memory only, cleared on discard)
 let _fundingKey = null;
 let _authKey = null;
+let _root = null; // BIP32 root for deriving indexed addresses
 
 /**
  * Derive funding and auth keys from 32-byte PRF entropy.
@@ -37,14 +38,14 @@ export function deriveKeys(entropy) {
   // Mnemonic → BIP32 seed (no passphrase)
   const seed = mnemonicToSeedSync(mnemonic);
 
-  // BIP32 master key
-  const root = HDKey.fromMasterSeed(seed);
+  // BIP32 master key — kept for deriving fresh addresses at higher indices
+  _root = HDKey.fromMasterSeed(seed);
 
-  // Derive funding key: m/86'/0'/0'/0/0 (BIP86 Taproot)
-  _fundingKey = root.derive("m/86'/0'/0'/0/0");
+  // Derive funding key: m/86'/0'/0'/0/0 (BIP86 Taproot, index 0)
+  _fundingKey = _root.derive("m/86'/0'/0'/0/0");
 
   // Derive auth key: m/84'/0'/0'/0/0 (BIP84 Native SegWit)
-  _authKey = root.derive("m/84'/0'/0'/0/0");
+  _authKey = _root.derive("m/84'/0'/0'/0/0");
 
   return {
     fundingKey: _fundingKey,
@@ -53,19 +54,40 @@ export function deriveKeys(entropy) {
 }
 
 /**
- * Derive P2TR (Taproot) address for mainnet from a funding key.
- * Returns a bc1p... address string.
+ * Derive P2TR (Taproot) address at a specific index.
+ * Path: m/86'/0'/0'/0/{index}
+ *
+ * index=0 is the default funding address. Higher indices are fresh
+ * receive addresses — avoids address reuse without Silent Payments.
  */
-export function getFundingAddress(fundingKey) {
-  const key = fundingKey || _fundingKey;
+export function getFundingAddress(fundingKeyOrIndex) {
+  let key;
+  if (typeof fundingKeyOrIndex === "number") {
+    if (!_root) throw new Error("No root key. Call deriveKeys() first.");
+    key = _root.derive(`m/86'/0'/0'/0/${fundingKeyOrIndex}`);
+  } else {
+    key = fundingKeyOrIndex || _fundingKey;
+  }
   if (!key) throw new Error("No funding key available. Call deriveKeys() first.");
 
-  // For BIP86 Taproot (key-path only, no script tree):
-  // Use the x-only public key (32 bytes, drop the prefix byte)
   const xOnlyPubkey = key.publicKey.slice(1);
   const payment = btc.p2tr(xOnlyPubkey);
-
   return payment.address;
+}
+
+/**
+ * Get a fresh receive address by incrementing the derivation index.
+ * Index is persisted in localStorage so it survives refreshes.
+ * Each call returns a new unused address (m/86'/0'/0'/0/N).
+ */
+export function getNextFundingAddress() {
+  if (!_root) throw new Error("No root key. Call deriveKeys() first.");
+
+  const idx = parseInt(localStorage.getItem("aegis_address_index") || "0");
+  const nextIdx = idx + 1;
+  localStorage.setItem("aegis_address_index", String(nextIdx));
+
+  return { address: getFundingAddress(nextIdx), index: nextIdx };
 }
 
 /**
@@ -177,4 +199,5 @@ export function discardKeys() {
   }
   _fundingKey = null;
   _authKey = null;
+  _root = null;
 }
