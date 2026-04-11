@@ -1,0 +1,57 @@
+# Lightning Terminal (litd) Configuration — Watch-Only with Remote Signer
+#
+# Flat config file for litd in watch-only mode. The remotesigner section is
+# active and points to the signer container on the same Docker network.
+# Uses litd's global network= flag (see litd.conf.template header).
+
+# --- litd settings ---
+
+lnd-mode=integrated
+network=testnet
+httpslisten=0.0.0.0:8443
+enablerest=true
+uipassword=agent-litd-password
+
+# --- lnd settings ---
+
+lnd.alias=litd-agent
+lnd.debuglevel=info
+
+lnd.listen=0.0.0.0:9735
+lnd.rpclisten=0.0.0.0:10009
+lnd.restlisten=0.0.0.0:8080
+lnd.tlsextraip=0.0.0.0
+
+lnd.wallet-unlock-password-file=/root/.lnd/wallet-password.txt
+lnd.wallet-unlock-allow-create=true
+
+lnd.maxpendingchannels=1
+lnd.minchansize=20000
+
+lnd.bitcoin.active=true
+lnd.bitcoin.node=neutrino
+
+lnd.bitcoin.defaultchanconfs=3
+lnd.bitcoin.basefee=1000
+lnd.bitcoin.feerate=1
+lnd.bitcoin.timelockdelta=80
+
+# Neutrino peers (mainnet CF-supporting).
+lnd.neutrino.addpeer=node.blixtwallet.com
+lnd.neutrino.addpeer=btcd1.lnolymp.us
+lnd.neutrino.addpeer=btcd2.lnolymp.us
+lnd.neutrino.addpeer=node.eldamar.icu
+
+lnd.fee.url=https://nodes.lightning.computer/fees/v1/btc-fee-estimates.json
+lnd.neutrino.persistfilters=true
+
+lnd.db.backend=sqlite
+
+lnd.autopilot.active=false
+lnd.tor.active=false
+
+# Remote signer — this node holds no private keys.
+lnd.remotesigner.enable=true
+lnd.remotesigner.rpchost=signer:10012
+lnd.remotesigner.tlscertpath=/root/.lnd/signer-credentials/tls.cert
+lnd.remotesigner.macaroonpath=/root/.lnd/signer-credentials/admin.macaroon
