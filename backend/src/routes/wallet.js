@@ -1,10 +1,13 @@
 /**
  * Wallet REST routes — registration, balance, send, receive, history, settings.
- * Wired to real LND/litd services.
+ *
+ * L1 (savings): self-custodial Taproot address → queried via mempool.space
+ * L2 (agent budget): custodial Lightning via LND/litd
  */
 import { Router } from "express";
 import jwt from "jsonwebtoken";
 import * as lnd from "../services/lnd.js";
+import * as mempool from "../services/mempool.js";
 import * as db from "../db/index.js";
 
 const router = Router();
@@ -58,32 +61,36 @@ router.post("/login", async (req, res, next) => {
 });
 
 // ── Balance ─────────────────────────────────────────────────────────────────
+// L1 = user's self-custodial Taproot address (via mempool.space)
+// L2 = LND Lightning channels (via litd)
 router.get("/balance", auth, async (req, res, next) => {
   try {
-    const [onchain, channels] = await Promise.allSettled([
-      lnd.getWalletBalance(),
+    const fundingAddress = req.query.address; // user's bc1p... address
+
+    const [l1Result, l2Result, priceResult] = await Promise.allSettled([
+      fundingAddress ? mempool.getAddressBalance(fundingAddress) : Promise.resolve(null),
       lnd.getBalance(),
+      fetch("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd", {
+        signal: AbortSignal.timeout(3000),
+      }).then((r) => r.json()),
     ]);
 
-    const l1Sats = onchain.status === "fulfilled"
-      ? parseInt(onchain.value.confirmed_balance || "0") : 0;
-    const l2Sats = channels.status === "fulfilled"
-      ? parseInt(channels.value.balance_sats || "0") : 0;
+    const l1Sats = l1Result.status === "fulfilled" && l1Result.value
+      ? l1Result.value.confirmed_sats : 0;
+    const l1Unconfirmed = l1Result.status === "fulfilled" && l1Result.value
+      ? l1Result.value.unconfirmed_sats : 0;
+    const l2Sats = l2Result.status === "fulfilled"
+      ? parseInt(l2Result.value.balance_sats || "0") : 0;
 
-    // BTC price — fetch from CoinGecko, fallback to 100k
     let btcPrice = 100000;
-    try {
-      const priceRes = await fetch(
-        "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd",
-        { signal: AbortSignal.timeout(3000) }
-      );
-      const priceData = await priceRes.json();
-      if (priceData?.bitcoin?.usd) btcPrice = priceData.bitcoin.usd;
-    } catch {}
+    if (priceResult.status === "fulfilled" && priceResult.value?.bitcoin?.usd) {
+      btcPrice = priceResult.value.bitcoin.usd;
+    }
 
     const totalSats = l1Sats + l2Sats;
     res.json({
       l1Sats,
+      l1Unconfirmed,
       l2Sats,
       totalSats,
       l1Usd: +((l1Sats / 1e8) * btcPrice).toFixed(2),
@@ -147,12 +154,36 @@ router.post("/receive", auth, async (req, res, next) => {
 });
 
 // ── History ─────────────────────────────────────────────────────────────────
+// L1 on-chain txs from mempool.space, L2 Lightning from LND, agent txs from DB
 router.get("/history", auth, async (req, res, next) => {
   try {
     const limit = parseInt(req.query.limit) || 20;
+    const address = req.query.address;
     const transactions = [];
 
-    // 1. Agent transactions from our DB
+    // 1. L1 on-chain transactions from mempool.space (user's self-custodial address)
+    if (address) {
+      try {
+        const onchainTxs = await mempool.getAddressTransactions(address);
+        for (const tx of onchainTxs) {
+          transactions.push({
+            id: `onchain_${tx.txid}`,
+            type: tx.direction,
+            description: tx.direction === "receive" ? "Received on-chain" : "Sent on-chain",
+            amount: tx.direction === "receive" ? tx.amount_sats : -tx.amount_sats,
+            amountSats: tx.amount_sats,
+            isAgent: false,
+            approvalType: null,
+            txid: tx.txid,
+            timestamp: tx.timestamp,
+            confirmations: tx.confirmed ? 1 : 0,
+            fee: tx.fee,
+          });
+        }
+      } catch {}
+    }
+
+    // 2. Agent transactions from our DB (MCP tool payments)
     const dbTxs = db.getTransactions(null, limit) || [];
     for (const tx of dbTxs) {
       transactions.push({
@@ -168,35 +199,15 @@ router.get("/history", auth, async (req, res, next) => {
       });
     }
 
-    // 2. On-chain transactions from LND
-    try {
-      const onchain = await lnd.getTransactions();
-      for (const tx of onchain.transactions || []) {
-        const amountSats = parseInt(tx.amount || "0");
-        transactions.push({
-          id: `onchain_${tx.tx_hash}`,
-          type: amountSats >= 0 ? "receive" : "send",
-          description: amountSats >= 0 ? "Received on-chain" : "Sent on-chain",
-          amount: amountSats >= 0 ? Math.abs(amountSats) : amountSats,
-          amountSats: Math.abs(amountSats),
-          isAgent: false,
-          approvalType: null,
-          txid: tx.tx_hash,
-          timestamp: new Date(parseInt(tx.time_stamp) * 1000).toISOString(),
-          confirmations: parseInt(tx.num_confirmations || "0"),
-        });
-      }
-    } catch {}
-
-    // 3. Lightning payments from LND
+    // 3. L2 Lightning payments from LND
     try {
       const lnPayments = await lnd.listPayments(null, limit);
       for (const p of lnPayments) {
-        if (transactions.some(t => t.id === `db_${p.payment_hash}`)) continue; // skip duplicates
+        if (transactions.some((t) => t.txid === p.payment_hash)) continue;
         transactions.push({
           id: `ln_${p.timestamp}`,
           type: "send",
-          description: `Lightning payment`,
+          description: "Lightning payment",
           amount: -p.amount_sats,
           amountSats: p.amount_sats,
           isAgent: false,
@@ -207,9 +218,7 @@ router.get("/history", auth, async (req, res, next) => {
       }
     } catch {}
 
-    // Sort by timestamp descending
     transactions.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-
     res.json({ transactions: transactions.slice(0, limit) });
   } catch (err) { next(err); }
 });
@@ -242,10 +251,14 @@ router.get("/funding-address", auth, async (req, res, next) => {
 });
 
 // ── UTXOs (for client-side PSBT construction) ───────────────────────────────
+// Returns UTXOs for the user's self-custodial Taproot address via mempool.space
 router.get("/utxos", auth, async (req, res, next) => {
   try {
-    const result = await lnd.listUnspent();
-    res.json({ utxos: result.utxos || [] });
+    const address = req.query.address;
+    if (!address) return res.status(400).json({ error: "address query param required" });
+
+    const utxos = await mempool.getAddressUtxos(address);
+    res.json({ utxos });
   } catch (err) { next(err); }
 });
 

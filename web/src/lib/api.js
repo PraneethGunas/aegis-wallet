@@ -90,9 +90,16 @@ export const wallet = {
       body: JSON.stringify({ credentialId, publicKey }),
     }),
 
-  getBalance: () => request("/wallet/balance"),
+  getBalance: (address) => {
+    const params = address ? `?address=${encodeURIComponent(address)}` : "";
+    return request(`/wallet/balance${params}`);
+  },
 
-  getHistory: (limit = 20) => request(`/wallet/history?limit=${limit}`),
+  getHistory: (limit = 20, address) => {
+    const params = new URLSearchParams({ limit });
+    if (address) params.set("address", address);
+    return request(`/wallet/history?${params}`);
+  },
 
   send: (payload) =>
     request("/wallet/send", {
@@ -108,7 +115,10 @@ export const wallet = {
 
   getFundingAddress: () => request("/wallet/funding-address"),
 
-  getUtxos: () => request("/wallet/utxos"),
+  getUtxos: (address) => {
+    const params = address ? `?address=${encodeURIComponent(address)}` : "";
+    return request(`/wallet/utxos${params}`);
+  },
 };
 
 // Agent endpoints

@@ -197,7 +197,9 @@ export function WalletProvider({ children }) {
   const fetchBalance = useCallback(async () => {
     dispatch({ type: "SET_LOADING", key: "balance", value: true });
     try {
-      const data = await api.wallet.getBalance();
+      // Pass user's self-custodial address so backend queries mempool.space for L1
+      const address = localStorage.getItem("aegis_funding_address");
+      const data = await api.wallet.getBalance(address);
       dispatch({
         type: "SET_BALANCE",
         balance: {
@@ -224,7 +226,8 @@ export function WalletProvider({ children }) {
   const fetchTransactions = useCallback(async () => {
     dispatch({ type: "SET_LOADING", key: "transactions", value: true });
     try {
-      const data = await api.wallet.getHistory();
+      const address = localStorage.getItem("aegis_funding_address");
+      const data = await api.wallet.getHistory(20, address);
       dispatch({
         type: "SET_TRANSACTIONS",
         transactions: data.transactions ?? [],
