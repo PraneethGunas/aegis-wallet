@@ -1,24 +1,17 @@
 /**
  * Bitcoin key derivation + transaction signing (CLIENT-SIDE only)
- * Uses: bitcoinjs-lib, bip39, bip32, tiny-secp256k1, ecpair
+ * Uses: @scure/btc-signer, @scure/bip32, @scure/bip39
  *
  * Key paths (mainnet):
  *   funding_key:  m/86h/0h/0h/0/0  (P2TR Taproot — signs L1 txs)
  *   auth_key:     m/84h/0h/0h/0/0  (Native SegWit — L2 auth only)
  */
 
-import * as bitcoin from "bitcoinjs-lib";
-import * as ecc from "tiny-secp256k1";
-import { BIP32Factory } from "bip32";
-import * as bip39 from "bip39";
-import ECPairFactory from "ecpair";
-
-// Initialize libraries with secp256k1
-bitcoin.initEccLib(ecc);
-const bip32 = BIP32Factory(ecc);
-const ECPair = ECPairFactory(ecc);
-
-const NETWORK = bitcoin.networks.bitcoin; // mainnet
+import * as btc from "@scure/btc-signer";
+import { hex } from "@scure/base";
+import { HDKey } from "@scure/bip32";
+import { entropyToMnemonic, mnemonicToSeedSync } from "@scure/bip39";
+import { wordlist } from "@scure/bip39/wordlists/english.js";
 
 // Active key material (held in memory only, cleared on discard)
 let _fundingKey = null;
@@ -31,7 +24,7 @@ let _authKey = null;
  * → funding_key at m/86'/0'/0'/0/0 (Taproot, for L1 signing)
  * → auth_key at m/84'/0'/0'/0/0 (SegWit, for L2 auth only)
  *
- * Returns { fundingKey, authKey } (BIP32 node objects)
+ * Returns { fundingKey, authKey } (HDKey objects)
  */
 export function deriveKeys(entropy) {
   if (!(entropy instanceof Uint8Array) || entropy.length !== 32) {
@@ -39,19 +32,19 @@ export function deriveKeys(entropy) {
   }
 
   // Convert entropy to BIP39 mnemonic (256-bit entropy → 24-word mnemonic)
-  const mnemonic = bip39.entropyToMnemonic(Buffer.from(entropy));
+  const mnemonic = entropyToMnemonic(entropy, wordlist);
 
   // Mnemonic → BIP32 seed (no passphrase)
-  const seed = bip39.mnemonicToSeedSync(mnemonic);
+  const seed = mnemonicToSeedSync(mnemonic);
 
   // BIP32 master key
-  const root = bip32.fromSeed(seed, NETWORK);
+  const root = HDKey.fromMasterSeed(seed);
 
   // Derive funding key: m/86'/0'/0'/0/0 (BIP86 Taproot)
-  _fundingKey = root.derivePath("m/86'/0'/0'/0/0");
+  _fundingKey = root.derive("m/86'/0'/0'/0/0");
 
   // Derive auth key: m/84'/0'/0'/0/0 (BIP84 Native SegWit)
-  _authKey = root.derivePath("m/84'/0'/0'/0/0");
+  _authKey = root.derive("m/84'/0'/0'/0/0");
 
   return {
     fundingKey: _fundingKey,
@@ -69,14 +62,10 @@ export function getFundingAddress(fundingKey) {
 
   // For BIP86 Taproot (key-path only, no script tree):
   // Use the x-only public key (32 bytes, drop the prefix byte)
-  const xOnlyPubkey = key.publicKey.subarray(1, 33);
+  const xOnlyPubkey = key.publicKey.slice(1);
+  const payment = btc.p2tr(xOnlyPubkey);
 
-  const { address } = bitcoin.payments.p2tr({
-    internalPubkey: xOnlyPubkey,
-    network: NETWORK,
-  });
-
-  return address;
+  return payment.address;
 }
 
 /**
@@ -85,14 +74,14 @@ export function getFundingAddress(fundingKey) {
 export function getAuthPublicKey(authKey) {
   const key = authKey || _authKey;
   if (!key) throw new Error("No auth key available. Call deriveKeys() first.");
-  return key.publicKey.toString("hex");
+  return hex.encode(key.publicKey);
 }
 
 /**
  * Sign a PSBT (Partially Signed Bitcoin Transaction) in the browser.
  *
  * psbtHex — hex-encoded PSBT from the backend
- * fundingKey — BIP32 key node (if not provided, uses cached key)
+ * fundingKey — HDKey (if not provided, uses cached key)
  *
  * Returns the signed transaction hex ready for broadcast.
  */
@@ -100,31 +89,19 @@ export function signTransaction(psbtHex, fundingKey) {
   const key = fundingKey || _fundingKey;
   if (!key) throw new Error("No funding key available. Call deriveKeys() first.");
 
-  const psbt = bitcoin.Psbt.fromHex(psbtHex, { network: NETWORK });
+  const tx = btc.Transaction.fromPSBT(hex.decode(psbtHex));
 
-  // For Taproot (P2TR), we need the tweaked key pair
-  const xOnlyPubkey = key.publicKey.subarray(1, 33);
+  // Sign all Taproot inputs with the private key
+  tx.sign(key.privateKey);
+  tx.finalize();
 
-  // Create a signer with the tweaked private key for key-path spending
-  const tweakedSigner = tweakSigner(key, { network: NETWORK });
-
-  // Sign all inputs
-  for (let i = 0; i < psbt.inputCount; i++) {
-    try {
-      psbt.signInput(i, tweakedSigner);
-    } catch {
-      // Input might not belong to this key (e.g., multi-input tx)
-    }
-  }
-
-  psbt.finalizeAllInputs();
-  return psbt.extractTransaction().toHex();
+  return tx.hex;
 }
 
 /**
  * Build an unsigned PSBT for funding the Lightning wallet (L1 → L2).
  *
- * fundingKey — BIP32 key node
+ * fundingKey — HDKey
  * lndAddress — LND's on-chain address (from backend)
  * amountSats — amount in satoshis to send
  * utxos — array of { txid, vout, value } from backend
@@ -142,96 +119,49 @@ export function createFundLNTransaction(
   const key = fundingKey || _fundingKey;
   if (!key) throw new Error("No funding key available. Call deriveKeys() first.");
 
-  const xOnlyPubkey = key.publicKey.subarray(1, 33);
-  const { output: myOutput } = bitcoin.payments.p2tr({
-    internalPubkey: xOnlyPubkey,
-    network: NETWORK,
-  });
+  const xOnlyPubkey = key.publicKey.slice(1);
+  const payment = btc.p2tr(xOnlyPubkey);
 
-  const psbt = new bitcoin.Psbt({ network: NETWORK });
+  const tx = new btc.Transaction();
 
   // Add inputs from UTXOs
-  let totalInput = 0;
+  let totalInput = 0n;
   for (const utxo of utxos) {
-    psbt.addInput({
-      hash: utxo.txid,
+    tx.addInput({
+      txid: utxo.txid,
       index: utxo.vout,
       witnessUtxo: {
-        script: myOutput,
-        value: utxo.value,
+        script: payment.script,
+        amount: BigInt(utxo.value),
       },
       tapInternalKey: xOnlyPubkey,
     });
-    totalInput += utxo.value;
+    totalInput += BigInt(utxo.value);
   }
 
-  // Estimate fee (Taproot input ~58 vB, output ~43 vB)
-  const estimatedVbytes = utxos.length * 58 + 2 * 43 + 10;
-  const fee = estimatedVbytes * feeRate;
+  const amount = BigInt(amountSats);
 
-  if (totalInput < amountSats + fee) {
+  // Estimate fee (Taproot input ~58 vB, output ~43 vB)
+  const estimatedVbytes = BigInt(utxos.length * 58 + 2 * 43 + 10);
+  const fee = estimatedVbytes * BigInt(feeRate);
+
+  if (totalInput < amount + fee) {
     throw new Error(
-      `Insufficient funds: have ${totalInput} sats, need ${amountSats + fee} sats (including ${fee} fee)`
+      `Insufficient funds: have ${totalInput} sats, need ${amount + fee} sats (including ${fee} fee)`
     );
   }
 
   // Output to LND
-  psbt.addOutput({
-    address: lndAddress,
-    value: amountSats,
-  });
+  tx.addOutputAddress(lndAddress, amount);
 
   // Change output back to our address
-  const change = totalInput - amountSats - fee;
-  if (change > 546) {
+  const change = totalInput - amount - fee;
+  if (change > 546n) {
     // Only add change if above dust limit
-    const fundingAddress = getFundingAddress(key);
-    psbt.addOutput({
-      address: fundingAddress,
-      value: change,
-    });
+    tx.addOutputAddress(payment.address, change);
   }
 
-  return psbt.toHex();
-}
-
-/**
- * Create a tweaked signer for Taproot key-path spending (BIP86).
- */
-function tweakSigner(signer, opts = {}) {
-  const privateKey = signer.privateKey;
-  if (!privateKey) throw new Error("Private key required for signing");
-
-  // Tweak the private key for key-path spending
-  const tweakedPrivateKey = ecc.privateNegate(privateKey);
-
-  // Use the parity-correct key
-  const pubkey = ecc.pointFromScalar(privateKey);
-  const pubkeyX = pubkey.subarray(1, 33);
-
-  // Check if we need to negate
-  const tweakHash = bitcoin.crypto.taggedHash(
-    "TapTweak",
-    Buffer.from(pubkeyX)
-  );
-
-  const tweakedKey = ecc.privateAdd(privateKey, tweakHash);
-  if (!tweakedKey) throw new Error("Failed to tweak private key");
-
-  // Check parity and possibly negate
-  const tweakedPubkey = ecc.pointFromScalar(tweakedKey);
-  const needsNegate = tweakedPubkey[0] === 3;
-
-  const finalKey = needsNegate
-    ? ecc.privateNegate(tweakedKey)
-    : tweakedKey;
-
-  return {
-    publicKey: Buffer.from(tweakedPubkey.subarray(1, 33)),
-    sign(hash) {
-      return Buffer.from(ecc.signSchnorr(hash, finalKey));
-    },
-  };
+  return hex.encode(tx.toPSBT());
 }
 
 /**
