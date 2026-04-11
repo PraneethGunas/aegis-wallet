@@ -1,0 +1,118 @@
+# Aegis — Full stack: LND signer + litd (watch-only) + backend + web
+#
+# Usage:
+#   docker compose up -d            # Start everything
+#   docker compose logs -f backend  # Follow backend logs
+#   docker compose down             # Stop (preserves data)
+#   docker compose down -v          # Stop + delete all data
+#
+# First run:
+#   ./scripts/init-wallet.sh        # Create wallets after containers are up
+
+services:
+  # Remote signer — holds private keys, signs transactions
+  signer:
+    image: lightninglabs/lnd:v0.20.0-beta
+    container_name: aegis-signer
+    restart: unless-stopped
+    entrypoint: >
+      /bin/sh -c "
+        touch /root/.lnd/wallet-password.txt &&
+        cp /tmp/lnd.conf /root/.lnd/lnd.conf &&
+        exec lnd
+      "
+    ports:
+      - "${SIGNER_RPC_PORT:-10012}:10012"
+      - "${SIGNER_REST_PORT:-10013}:10013"
+    volumes:
+      - signer-data:/root/.lnd
+      - ./docker/signer-lnd.conf.template:/tmp/lnd.conf:ro
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    networks:
+      - aegis
+
+  # Lightning Terminal — watch-only node, no private keys
+  litd:
+    image: lightninglabs/lightning-terminal:v0.16.0-alpha
+    container_name: aegis-litd
+    restart: unless-stopped
+    depends_on:
+      - signer
+    entrypoint: >
+      /bin/sh -c "
+        touch /root/.lnd/wallet-password.txt &&
+        cp /tmp/lit.conf /root/.lit/lit.conf &&
+        exec litd
+      "
+    ports:
+      - "${LITD_HTTPS_PORT:-8443}:8443"
+      - "${LND_GRPC_PORT:-10009}:10009"
+      - "${LND_P2P_PORT:-9735}:9735"
+      - "${LND_REST_PORT:-8080}:8080"
+    volumes:
+      - litd-data:/root/.lnd
+      - litd-lit-data:/root/.lit
+      - ./docker/litd.conf.template:/tmp/lit.conf:ro
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    networks:
+      - aegis
+
+  # Aegis backend — Express API + WebSocket + MCP server
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: aegis-backend
+    restart: unless-stopped
+    depends_on:
+      - litd
+    ports:
+      - "${BACKEND_PORT:-3001}:3001"
+    environment:
+      - PORT=3001
+      - LND_MACAROON_PATH=/certs/admin.macaroon
+      - LND_CERT_PATH=/certs/tls.cert
+      - LITD_HOST=https://litd:8443
+      - LND_REST_HOST=https://litd:8080
+      - JWT_SECRET=${JWT_SECRET:-aegis-dev-secret}
+      - RP_ID=${RP_ID:-localhost}
+      - ORIGIN=${ORIGIN:-http://localhost:3000}
+      - BITCOIN_NETWORK=${BITCOIN_NETWORK:-mainnet}
+      - DB_PATH=/data/aegis.db
+      - NODE_TLS_REJECT_UNAUTHORIZED=0
+    volumes:
+      - backend-data:/data
+      - litd-data:/certs:ro
+    networks:
+      - aegis
+
+  # Aegis web — Next.js frontend
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: aegis-web
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:3001
+      - NEXT_PUBLIC_WS_URL=ws://localhost:3001/ws
+    networks:
+      - aegis
+
+volumes:
+  signer-data:
+  litd-data:
+  litd-lit-data:
+  backend-data:
+
+networks:
+  aegis:
+    driver: bridge
