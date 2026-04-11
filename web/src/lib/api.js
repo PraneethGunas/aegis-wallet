@@ -94,10 +94,10 @@ export const wallet = {
 
   getHistory: (limit = 20) => request(`/wallet/history?limit=${limit}`),
 
-  send: (txHex) =>
+  send: (payload) =>
     request("/wallet/send", {
       method: "POST",
-      body: JSON.stringify({ txHex }),
+      body: JSON.stringify(payload),
     }),
 
   receive: (type, options = {}) =>
