@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Send, Download, Bot, Settings, Wallet, Bell } from "lucide-react";
+import { LayoutDashboard, Send, Download, Bot, Settings, Wallet } from "lucide-react";
 import { motion } from "motion/react";
 import ApprovalModal from "./ApprovalModal";
+import { useWallet } from "@/lib/store";
 
 const navItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
@@ -18,11 +18,15 @@ const navItems = [
 export default function Navigation({ children }) {
   const pathname = usePathname();
   const isWelcome = pathname === "/";
-  const [showApprovalModal, setShowApprovalModal] = useState(false);
+  const { pendingApproval, approveRequest, denyRequest, btcPrice } = useWallet();
 
   if (isWelcome) {
     return <>{children}</>;
   }
+
+  const approvalAmount = pendingApproval
+    ? (pendingApproval.amountSats / 100_000_000) * btcPrice
+    : 0;
 
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden">
@@ -92,31 +96,15 @@ export default function Navigation({ children }) {
         </div>
       </nav>
 
-      {/* Demo: Approval Request Trigger */}
-      <motion.button
-        whileHover={{ scale: 1.1 }}
-        whileTap={{ scale: 0.9 }}
-        onClick={() => setShowApprovalModal(true)}
-        className="fixed bottom-24 right-6 md:bottom-6 w-14 h-14 rounded-full bg-gradient-to-br from-secondary to-secondary/80 text-white shadow-lg flex items-center justify-center z-40"
-        title="Demo: Agent approval request"
-      >
-        <motion.div
-          animate={{ scale: [1, 1.2, 1] }}
-          transition={{ duration: 2, repeat: Infinity }}
-        >
-          <Bell className="w-6 h-6" />
-        </motion.div>
-      </motion.button>
-
-      {/* Approval Modal */}
+      {/* Approval Modal — triggered by real WebSocket events */}
       <ApprovalModal
-        isOpen={showApprovalModal}
-        onClose={() => setShowApprovalModal(false)}
-        onApprove={() => setShowApprovalModal(false)}
-        onDeny={() => setShowApprovalModal(false)}
-        type="payment"
-        amount={15.99}
-        reason="Claude wants to purchase a GitHub Copilot subscription"
+        isOpen={!!pendingApproval}
+        onClose={() => denyRequest(pendingApproval?.approvalId)}
+        onApprove={() => approveRequest(pendingApproval?.approvalId)}
+        onDeny={() => denyRequest(pendingApproval?.approvalId)}
+        type={pendingApproval?.type || "payment"}
+        amount={approvalAmount}
+        reason={pendingApproval?.reason || ""}
         isUrgent={true}
       />
     </div>
