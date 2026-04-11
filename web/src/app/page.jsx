@@ -9,18 +9,14 @@ import { useWallet } from "@/lib/store";
 export default function Welcome() {
   const router = useRouter();
   const { createWallet, authenticate, error } = useWallet();
-  const [loading, setLoading] = useState(null); // "create" | "open" | null
+  const [loading, setLoading] = useState(null);
 
   const handleCreateWallet = async () => {
     setLoading("create");
     try {
       await createWallet();
       router.push("/dashboard");
-    } catch {
-      // Error is set in context
-    } finally {
-      setLoading(null);
-    }
+    } catch {} finally { setLoading(null); }
   };
 
   const handleOpenWallet = async () => {
@@ -28,177 +24,136 @@ export default function Welcome() {
     try {
       await authenticate();
       router.push("/dashboard");
-    } catch {
-      // Error is set in context
-    } finally {
-      setLoading(null);
-    }
+    } catch {} finally { setLoading(null); }
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <section className="relative h-screen flex items-center overflow-hidden">
-        {/* Background gradient */}
-        <div className="absolute inset-0">
-          <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-background to-secondary/10" />
-          <div className="absolute inset-0 bg-gradient-to-r from-background via-background/90 to-transparent" />
-        </div>
+    <div className="min-h-screen text-foreground flex items-center">
 
-        <div className="relative z-10 max-w-7xl mx-auto px-8 md:px-12 w-full">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8 }}
-            className="max-w-2xl"
+      <div className="relative z-10 max-w-5xl mx-auto px-8 md:px-16 w-full py-20">
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6 }}
+          className="max-w-xl"
+        >
+          {/* Wordmark */}
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.1 }}
+            className="font-mono text-sm text-muted-foreground tracking-widest uppercase mb-10"
           >
-            {/* Logo */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: 0.2, duration: 0.6 }}
-              className="mb-8"
-            >
-              <div className="inline-flex items-center gap-3 px-4 py-2 rounded-full bg-gradient-to-r from-primary/20 to-secondary/20 border border-primary/30">
-                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-secondary" />
-                <span className="text-2xl tracking-tight">Aegis</span>
-              </div>
-            </motion.div>
+            aegis
+          </motion.p>
 
-            {/* Headline */}
-            <motion.h1
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.4, duration: 0.8 }}
-              className="text-5xl md:text-7xl mb-6 tracking-tight"
-              style={{ fontWeight: 600 }}
-            >
-              Your Bitcoin wallet.
-              <br />
-              <span className="bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
-                No seed phrase.
-              </span>
-              <br />
-              Just you.
-            </motion.h1>
+          {/* Headline */}
+          <motion.h1
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2, duration: 0.6 }}
+            className="text-4xl md:text-6xl mb-5 tracking-tight leading-[1.1]"
+            style={{ fontWeight: 600, letterSpacing: "-0.035em" }}
+          >
+            Your Bitcoin.
+            <br />
+            <span className="text-primary">Claude&apos;s spending power.</span>
+          </motion.h1>
 
-            <motion.p
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.6, duration: 0.8 }}
-              className="text-xl text-muted-foreground mb-12 max-w-xl"
-            >
-              Biometric security meets AI-powered payments. Self-custody made
-              simple.
-            </motion.p>
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.35 }}
+            className="text-lg text-muted-foreground mb-10 max-w-md leading-relaxed"
+          >
+            Give Claude a Lightning budget. Set auto-pay limits.
+            Approve with biometrics. Stay in control.
+          </motion.p>
 
-            {/* Error message */}
-            {error && (
-              <motion.div
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="mb-6 p-4 rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-sm"
-              >
-                {error}
-              </motion.div>
-            )}
-
-            {/* CTA Buttons */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.8, duration: 0.8 }}
-              className="flex flex-col sm:flex-row gap-4 mb-16"
-            >
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={handleCreateWallet}
-                disabled={!!loading}
-                className="group relative px-8 py-4 rounded-2xl bg-gradient-to-r from-primary to-primary/90 text-primary-foreground overflow-hidden disabled:opacity-70"
-              >
-                <motion.div
-                  className="absolute inset-0 bg-white/20"
-                  animate={{ scale: [1, 1.2, 1] }}
-                  transition={{ duration: 2, repeat: Infinity }}
-                  style={{ borderRadius: "inherit" }}
-                />
-                <span className="relative flex items-center justify-center gap-3 text-lg">
-                  {loading === "create" ? (
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                  ) : (
-                    <motion.div
-                      animate={{ scale: [1, 1.1, 1] }}
-                      transition={{ duration: 1.5, repeat: Infinity }}
-                    >
-                      <Fingerprint className="w-5 h-5" />
-                    </motion.div>
-                  )}
-                  {loading === "create" ? "Creating..." : "Create Wallet"}
-                </span>
-              </motion.button>
-
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={handleOpenWallet}
-                disabled={!!loading}
-                className="px-8 py-4 rounded-2xl border border-border text-foreground hover:bg-muted transition-colors text-lg disabled:opacity-70 flex items-center justify-center gap-3"
-              >
-                {loading === "open" && (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                )}
-                {loading === "open" ? "Authenticating..." : "Open Wallet"}
-              </motion.button>
-            </motion.div>
-
-            {/* 3-Step Explainer */}
+          {error && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              transition={{ delay: 1, duration: 0.8 }}
-              className="grid md:grid-cols-3 gap-6"
+              className="mb-6 px-4 py-3 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-sm"
             >
-              {[
-                {
-                  icon: Fingerprint,
-                  title: "Biometric creates your wallet",
-                  description:
-                    "Face ID or fingerprint. No passwords to remember.",
-                },
-                {
-                  icon: Shield,
-                  title: "Fund with Bitcoin",
-                  description: "Your savings stay in your control.",
-                },
-                {
-                  icon: Zap,
-                  title: "Your AI agent handles payments",
-                  description:
-                    "Claude manages spending within your limits.",
-                },
-              ].map((step, index) => (
-                <motion.div
-                  key={index}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 1.2 + index * 0.2, duration: 0.6 }}
-                  className="flex flex-col gap-3"
-                >
-                  <div className="w-12 h-12 rounded-xl bg-muted flex items-center justify-center">
-                    <step.icon className="w-6 h-6 text-primary" />
-                  </div>
-                  <div>
-                    <h3 className="mb-1">{step.title}</h3>
-                    <p className="text-sm text-muted-foreground">
-                      {step.description}
-                    </p>
-                  </div>
-                </motion.div>
-              ))}
+              {error}
             </motion.div>
+          )}
+
+          {/* CTAs */}
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.45 }}
+            className="flex items-center gap-5 mb-20"
+          >
+            <motion.button
+              whileHover={{ scale: 1.03 }}
+              whileTap={{ scale: 0.97 }}
+              transition={{ type: "spring", stiffness: 400, damping: 17 }}
+              onClick={handleCreateWallet}
+              disabled={!!loading}
+              className="px-7 py-3.5 rounded-xl bg-primary text-primary-foreground text-[15px] font-medium flex items-center gap-2.5 disabled:opacity-60 glow-orange"
+            >
+              {loading === "create" ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Fingerprint className="w-4 h-4" />
+              )}
+              {loading === "create" ? "Creating..." : "Create Wallet"}
+            </motion.button>
+
+            <button
+              onClick={handleOpenWallet}
+              disabled={!!loading}
+              className="text-[15px] text-muted-foreground hover:text-foreground transition-colors disabled:opacity-60 flex items-center gap-2"
+            >
+              {loading === "open" && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              {loading === "open" ? "Authenticating..." : "Open existing wallet"}
+            </button>
           </motion.div>
-        </div>
-      </section>
+
+          {/* Steps */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.6 }}
+            className="grid md:grid-cols-3 gap-8"
+          >
+            {[
+              {
+                icon: Fingerprint,
+                title: "Passkey creates your keys",
+                desc: "Face ID derives your wallet. No seed phrase, ever.",
+              },
+              {
+                icon: Shield,
+                title: "Set a spending budget",
+                desc: "Fund Lightning from savings. Budgets enforced cryptographically.",
+              },
+              {
+                icon: Zap,
+                title: "Claude pays, you approve",
+                desc: "Auto-pay under your limit. Biometric above it.",
+              },
+            ].map((step, i) => (
+              <motion.div
+                key={i}
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.7 + i * 0.1 }}
+                className="space-y-2.5"
+              >
+                <div className="w-10 h-10 rounded-lg glass border border-border/50 flex items-center justify-center">
+                  <step.icon className="w-[18px] h-[18px] text-muted-foreground" />
+                </div>
+                <p className="text-sm font-medium">{step.title}</p>
+                <p className="text-[13px] text-muted-foreground leading-relaxed">{step.desc}</p>
+              </motion.div>
+            ))}
+          </motion.div>
+        </motion.div>
+      </div>
     </div>
   );
 }
