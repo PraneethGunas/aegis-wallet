@@ -1,34 +1,88 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Bot, Check, X, Pause, Power, ArrowLeft } from "lucide-react";
+import { Bot, Check, X, Pause, Play, Power, ArrowLeft, Loader2 } from "lucide-react";
 import { motion } from "motion/react";
 import PairingQR from "@/components/PairingQR";
-
-// TODO: Replace with real data from API + WebSocket
-const MOCK_ACTIVITIES = [
-  { id: 1, action: "Paid for coolproject.co domain", amount: 12.99, status: "auto-approved", timestamp: "2 hours ago" },
-  { id: 2, action: "Requested budget top-up", amount: 25.0, status: "approved", timestamp: "1 day ago" },
-  { id: 3, action: "Paid for OpenAI API credits", amount: 8.5, status: "auto-approved", timestamp: "1 day ago" },
-  { id: 4, action: "Paid for GitHub Pro subscription", amount: 4.0, status: "auto-approved", timestamp: "2 days ago" },
-  { id: 5, action: "Requested AWS credits purchase", amount: 50.0, status: "denied", timestamp: "3 days ago" },
-];
-
-function satsToDisplay(spent, budget) {
-  const spentSats = Math.round((spent / 62850) * 100000000);
-  const budgetSats = Math.round((budget / 62850) * 100000000);
-  return `${spentSats.toLocaleString()} / ${budgetSats.toLocaleString()} sats`;
-}
+import { useWallet } from "@/lib/store";
+import * as api from "@/lib/api";
 
 export default function AgentPage() {
-  const [isPaired, setIsPaired] = useState(true);
-  const [isActive, setIsActive] = useState(true);
-  const [autoPayLimit, setAutoPayLimit] = useState(2.5);
+  const {
+    agent,
+    btcPrice,
+    fetchAgentStatus,
+    pauseAgent,
+    resumeAgent,
+    transactions,
+    fetchTransactions,
+  } = useWallet();
 
-  const budget = 25.0;
-  const spent = 6.2;
-  const percentUsed = (spent / budget) * 100;
+  const [autoPayLimit, setAutoPayLimit] = useState(2.5);
+  const [savingLimit, setSavingLimit] = useState(false);
+  const [pairingConfig, setPairingConfig] = useState(null);
+  const [creating, setCreating] = useState(false);
+
+  useEffect(() => {
+    fetchAgentStatus();
+    fetchTransactions();
+  }, [fetchAgentStatus, fetchTransactions]);
+
+  // Sync slider with agent state
+  useEffect(() => {
+    if (agent.autoPayLimitSats > 0) {
+      setAutoPayLimit((agent.autoPayLimitSats / 100_000_000) * btcPrice);
+    }
+  }, [agent.autoPayLimitSats, btcPrice]);
+
+  const budget = (agent.budgetSats / 100_000_000) * btcPrice;
+  const spent = (agent.spentSats / 100_000_000) * btcPrice;
+  const percentUsed = budget > 0 ? (spent / budget) * 100 : 0;
+
+  const agentActivities = transactions
+    .filter((tx) => tx.isAgent)
+    .slice(0, 10);
+
+  const handleAutoPayChange = async (value) => {
+    setAutoPayLimit(value);
+    // Debounced save
+    setSavingLimit(true);
+    try {
+      const limitSats = Math.round((value / btcPrice) * 100_000_000);
+      await api.agent.updateAutoPayLimit(limitSats);
+    } catch {
+      // Will retry on next change
+    } finally {
+      setSavingLimit(false);
+    }
+  };
+
+  const handleCreateAgent = async () => {
+    setCreating(true);
+    try {
+      // Create agent with default budget
+      await api.agent.create(50000, 250);
+      // Get pairing config
+      const config = await api.agent.pair();
+      setPairingConfig(config);
+      fetchAgentStatus();
+    } catch (err) {
+      // Error handling
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    await pauseAgent();
+    fetchAgentStatus();
+  };
+
+  const satsDisplay = (usdVal) => {
+    const sats = Math.round((usdVal / btcPrice) * 100_000_000);
+    return sats.toLocaleString();
+  };
 
   return (
     <div className="min-h-screen pb-24 md:pb-8">
@@ -51,7 +105,7 @@ export default function AgentPage() {
           </p>
         </motion.div>
 
-        {isPaired ? (
+        {agent.isPaired ? (
           <div className="space-y-6">
             {/* Agent Status Card */}
             <motion.div
@@ -70,18 +124,20 @@ export default function AgentPage() {
                     <div className="flex items-center gap-2">
                       <div
                         className={`w-2 h-2 rounded-full ${
-                          isActive
+                          agent.isActive
                             ? "bg-success-green animate-pulse"
                             : "bg-amber-500"
                         }`}
                       />
                       <span className="text-muted-foreground">
-                        {isActive ? "Active" : "Paused"}
+                        {agent.isActive ? "Active" : "Paused"}
                       </span>
                     </div>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      Connected since Apr 8, 2026
-                    </p>
+                    {agent.connectedSince && (
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Connected since {new Date(agent.connectedSince).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -97,13 +153,13 @@ export default function AgentPage() {
                 <div className="h-3 rounded-full bg-muted overflow-hidden">
                   <motion.div
                     initial={{ width: 0 }}
-                    animate={{ width: `${percentUsed}%` }}
+                    animate={{ width: `${Math.min(percentUsed, 100)}%` }}
                     transition={{ delay: 0.3, duration: 0.8 }}
                     className="h-full bg-gradient-to-r from-secondary to-secondary/80"
                   />
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  {satsToDisplay(spent, budget)} used
+                  {satsDisplay(spent)} / {satsDisplay(budget)} sats used
                 </p>
               </div>
 
@@ -122,6 +178,9 @@ export default function AgentPage() {
                     <p className="text-2xl" style={{ fontWeight: 600 }}>
                       ${autoPayLimit.toFixed(2)}
                     </p>
+                    {savingLimit && (
+                      <p className="text-xs text-muted-foreground">Saving...</p>
+                    )}
                   </div>
                 </div>
                 <input
@@ -130,7 +189,7 @@ export default function AgentPage() {
                   max="50.00"
                   step="0.50"
                   value={autoPayLimit}
-                  onChange={(e) => setAutoPayLimit(parseFloat(e.target.value))}
+                  onChange={(e) => handleAutoPayChange(parseFloat(e.target.value))}
                   className="w-full h-2 rounded-full appearance-none bg-muted cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-secondary"
                 />
                 <div className="flex items-center justify-between text-xs text-muted-foreground mt-2">
@@ -153,11 +212,20 @@ export default function AgentPage() {
                 <motion.button
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
-                  onClick={() => setIsActive(!isActive)}
+                  onClick={() => agent.isActive ? pauseAgent() : resumeAgent()}
                   className="px-6 py-3 rounded-xl border border-border hover:bg-muted transition-colors flex items-center gap-2"
                 >
-                  <Pause className="w-4 h-4" />
-                  {isActive ? "Pause" : "Resume"}
+                  {agent.isActive ? (
+                    <>
+                      <Pause className="w-4 h-4" />
+                      Pause
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-4 h-4" />
+                      Resume
+                    </>
+                  )}
                 </motion.button>
               </div>
             </motion.div>
@@ -169,61 +237,69 @@ export default function AgentPage() {
               transition={{ delay: 0.2 }}
             >
               <h2 className="text-xl mb-4">Agent Activity</h2>
-              <div className="space-y-2">
-                {MOCK_ACTIVITIES.map((activity, index) => (
-                  <motion.div
-                    key={activity.id}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: 0.3 + index * 0.05 }}
-                    className="p-4 rounded-xl bg-card border border-border"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <p className="mb-1">{activity.action}</p>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm text-muted-foreground">
-                            {activity.timestamp}
-                          </span>
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-xs ${
-                              activity.status === "auto-approved"
-                                ? "bg-success-green/20 text-success-green"
-                                : activity.status === "approved"
-                                  ? "bg-secondary/20 text-secondary"
-                                  : "bg-destructive/20 text-destructive"
-                            }`}
-                          >
-                            {activity.status === "auto-approved" && (
-                              <>
-                                <Check className="w-3 h-3 inline mr-1" />
-                                Auto-approved
-                              </>
+              {agentActivities.length === 0 ? (
+                <div className="p-8 rounded-xl bg-card border border-border text-center text-muted-foreground">
+                  No agent activity yet
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {agentActivities.map((activity, index) => (
+                    <motion.div
+                      key={activity.id}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: 0.3 + index * 0.05 }}
+                      className="p-4 rounded-xl bg-card border border-border"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <p className="mb-1">{activity.description}</p>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-muted-foreground">
+                              {activity.timestamp}
+                            </span>
+                            {activity.approvalType && (
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-xs ${
+                                  activity.approvalType === "auto"
+                                    ? "bg-success-green/20 text-success-green"
+                                    : activity.approvalType === "approved"
+                                      ? "bg-secondary/20 text-secondary"
+                                      : "bg-destructive/20 text-destructive"
+                                }`}
+                              >
+                                {activity.approvalType === "auto" && (
+                                  <>
+                                    <Check className="w-3 h-3 inline mr-1" />
+                                    Auto-approved
+                                  </>
+                                )}
+                                {activity.approvalType === "approved" && (
+                                  <>
+                                    <Check className="w-3 h-3 inline mr-1" />
+                                    Approved
+                                  </>
+                                )}
+                                {activity.approvalType === "denied" && (
+                                  <>
+                                    <X className="w-3 h-3 inline mr-1" />
+                                    Denied
+                                  </>
+                                )}
+                              </span>
                             )}
-                            {activity.status === "approved" && (
-                              <>
-                                <Check className="w-3 h-3 inline mr-1" />
-                                Approved
-                              </>
-                            )}
-                            {activity.status === "denied" && (
-                              <>
-                                <X className="w-3 h-3 inline mr-1" />
-                                Denied
-                              </>
-                            )}
-                          </span>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-lg" style={{ fontWeight: 500 }}>
+                            ${Math.abs(activity.amount).toFixed(2)}
+                          </p>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <p className="text-lg" style={{ fontWeight: 500 }}>
-                          ${activity.amount.toFixed(2)}
-                        </p>
-                      </div>
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
             </motion.div>
 
             {/* Danger Zone */}
@@ -239,10 +315,7 @@ export default function AgentPage() {
               <motion.button
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
-                onClick={() => {
-                  // TODO: Call api.agent.pause() to revoke macaroon
-                  setIsPaired(false);
-                }}
+                onClick={handleDisconnect}
                 className="px-6 py-3 rounded-xl border border-destructive text-destructive hover:bg-destructive hover:text-white transition-colors flex items-center gap-2"
               >
                 <Power className="w-4 h-4" />
@@ -268,7 +341,27 @@ export default function AgentPage() {
               </p>
             </div>
 
-            <PairingQR onConfirm={() => setIsPaired(true)} />
+            {pairingConfig ? (
+              <PairingQR
+                configString={pairingConfig.configString || JSON.stringify(pairingConfig)}
+                onConfirm={() => fetchAgentStatus()}
+              />
+            ) : (
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={handleCreateAgent}
+                disabled={creating}
+                className="px-8 py-4 rounded-xl bg-secondary text-secondary-foreground flex items-center justify-center gap-2 mx-auto disabled:opacity-70"
+              >
+                {creating ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : (
+                  <Bot className="w-5 h-5" />
+                )}
+                {creating ? "Setting up..." : "Create Agent Account"}
+              </motion.button>
+            )}
           </motion.div>
         )}
       </div>

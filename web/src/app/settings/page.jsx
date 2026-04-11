@@ -2,21 +2,56 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Fingerprint, Plus, Smartphone, ArrowLeft, AlertTriangle } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Fingerprint, Plus, Smartphone, ArrowLeft, AlertTriangle, Loader2 } from "lucide-react";
 import { motion } from "motion/react";
+import { useWallet } from "@/lib/store";
+import * as api from "@/lib/api";
 
 export default function SettingsPage() {
-  const [autoPayLimit, setAutoPayLimit] = useState(2.5);
+  const router = useRouter();
+  const { agent, btcPrice, logout } = useWallet();
+  const [autoPayLimit, setAutoPayLimit] = useState(
+    (agent.autoPayLimitSats / 100_000_000) * btcPrice || 2.5
+  );
   const [currency, setCurrency] = useState("USD");
+  const [withdrawAddress, setWithdrawAddress] = useState("");
+  const [showWithdraw, setShowWithdraw] = useState(false);
+  const [withdrawing, setWithdrawing] = useState(false);
+  const [error, setError] = useState(null);
 
   // TODO: Fetch real passkey list from backend
   const passkeys = [
-    { id: 1, name: "iPhone 15 Pro", added: "Apr 8, 2026" },
-    { id: 2, name: "MacBook Pro", added: "Apr 8, 2026" },
+    { id: 1, name: "This Device", added: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) },
   ];
 
-  const handleWithdrawAll = () => {
-    // TODO: Prompt for address, trigger passkey signing, call api.ln.withdraw()
+  const handleAutoPayChange = async (value) => {
+    setAutoPayLimit(value);
+    try {
+      const limitSats = Math.round((value / btcPrice) * 100_000_000);
+      await api.agent.updateAutoPayLimit(limitSats);
+    } catch {
+      // Will retry on next change
+    }
+  };
+
+  const handleWithdrawAll = async () => {
+    if (!withdrawAddress) return;
+    setWithdrawing(true);
+    setError(null);
+    try {
+      await api.ln.withdraw(withdrawAddress);
+      router.push("/dashboard");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setWithdrawing(false);
+    }
+  };
+
+  const handleLogout = () => {
+    logout();
+    router.push("/");
   };
 
   return (
@@ -39,6 +74,16 @@ export default function SettingsPage() {
             Manage your wallet preferences
           </p>
         </motion.div>
+
+        {error && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-6 p-4 rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-sm"
+          >
+            {error}
+          </motion.div>
+        )}
 
         <div className="space-y-8">
           {/* Passkeys */}
@@ -105,7 +150,7 @@ export default function SettingsPage() {
                   </p>
                   <p className="text-sm text-muted-foreground">
                     {Math.round(
-                      (autoPayLimit / 62850) * 100000000
+                      (autoPayLimit / btcPrice) * 100_000_000
                     ).toLocaleString()}{" "}
                     sats
                   </p>
@@ -117,7 +162,7 @@ export default function SettingsPage() {
                 max="50.00"
                 step="0.50"
                 value={autoPayLimit}
-                onChange={(e) => setAutoPayLimit(parseFloat(e.target.value))}
+                onChange={(e) => handleAutoPayChange(parseFloat(e.target.value))}
                 className="w-full h-2 rounded-full appearance-none bg-muted cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-secondary"
               />
               <div className="flex items-center justify-between text-xs text-muted-foreground mt-2">
@@ -169,22 +214,51 @@ export default function SettingsPage() {
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <p className="mb-1" style={{ fontWeight: 500 }}>
-                    Claude is connected
+                    {agent.isPaired ? "Claude is connected" : "No agent connected"}
                   </p>
-                  <p className="text-sm text-muted-foreground">
-                    Active since Apr 8, 2026
-                  </p>
+                  {agent.connectedSince && (
+                    <p className="text-sm text-muted-foreground">
+                      Active since {new Date(agent.connectedSince).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                    </p>
+                  )}
                 </div>
-                <div className="w-3 h-3 rounded-full bg-success-green animate-pulse" />
+                <div
+                  className={`w-3 h-3 rounded-full ${
+                    agent.isPaired && agent.isActive
+                      ? "bg-success-green animate-pulse"
+                      : "bg-muted-foreground"
+                  }`}
+                />
               </div>
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                className="w-full px-4 py-3 rounded-xl border border-border hover:bg-muted transition-colors text-sm"
-              >
-                Regenerate Auth Token
-              </motion.button>
+              {!agent.isPaired && (
+                <Link href="/agent">
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    className="w-full px-4 py-3 rounded-xl bg-secondary text-secondary-foreground text-sm"
+                  >
+                    Connect Agent
+                  </motion.button>
+                </Link>
+              )}
             </div>
+          </motion.section>
+
+          {/* Session */}
+          <motion.section
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.55 }}
+          >
+            <h2 className="text-xl mb-4">Session</h2>
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={handleLogout}
+              className="px-6 py-3 rounded-xl border border-border hover:bg-muted transition-colors"
+            >
+              Sign Out
+            </motion.button>
           </motion.section>
 
           {/* Danger Zone */}
@@ -207,14 +281,47 @@ export default function SettingsPage() {
                   </p>
                 </div>
               </div>
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={handleWithdrawAll}
-                className="w-full px-6 py-3 rounded-xl border border-destructive text-destructive hover:bg-destructive hover:text-white transition-colors"
-              >
-                Withdraw All Funds
-              </motion.button>
+
+              {showWithdraw ? (
+                <div className="space-y-3">
+                  <input
+                    type="text"
+                    value={withdrawAddress}
+                    onChange={(e) => setWithdrawAddress(e.target.value)}
+                    placeholder="Destination address (bc1q... or bc1p...)"
+                    className="w-full px-4 py-3 rounded-xl bg-input border border-destructive/30 focus:border-destructive focus:outline-none transition-colors"
+                  />
+                  <div className="flex gap-3">
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={handleWithdrawAll}
+                      disabled={!withdrawAddress || withdrawing}
+                      className="flex-1 px-6 py-3 rounded-xl bg-destructive text-white disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      {withdrawing && <Loader2 className="w-4 h-4 animate-spin" />}
+                      {withdrawing ? "Withdrawing..." : "Confirm Withdrawal"}
+                    </motion.button>
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => setShowWithdraw(false)}
+                      className="px-6 py-3 rounded-xl border border-border hover:bg-muted transition-colors"
+                    >
+                      Cancel
+                    </motion.button>
+                  </div>
+                </div>
+              ) : (
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => setShowWithdraw(true)}
+                  className="w-full px-6 py-3 rounded-xl border border-destructive text-destructive hover:bg-destructive hover:text-white transition-colors"
+                >
+                  Withdraw All Funds
+                </motion.button>
+              )}
             </div>
           </motion.section>
         </div>
