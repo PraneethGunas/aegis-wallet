@@ -132,7 +132,7 @@ These are enforced in code review and CI. PRs that violate them will be rejected
 
 Here are some areas where contributions would be especially valuable:
 
-- **MCP server tools** — implementing and testing the 6 wallet tools Claude uses
+- **MCP server tools** — implementing and testing the 7 wallet tools Claude uses
 - **WebAuthn PRF compatibility** — testing across browsers and platforms
 - **Lightning integration testing** — simulated multi-node environments
 - **Agent pairing flow** — QR code generation, config management, deep links

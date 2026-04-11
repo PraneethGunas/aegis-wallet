@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A seedless Bitcoin wallet where Claude is the AI financial agent. Two-layer custody: L1 self-custodial standard Taproot address + L2 custodial Lightning with macaroon-enforced budgets. Claude operates on L2 via MCP server — no custom agent runtime. User authenticates with passkeys (WebAuthn PRF).
+A seedless Bitcoin wallet where Claude is the AI financial agent. Two-layer custody: L1 self-custodial standard Taproot address + L2 custodial Lightning with macaroon-enforced budgets. Claude operates on L2 via MCP server — no custom agent runtime. User authenticates with passkeys (WebAuthn PRF). The web app is a control plane — identity, spending policy, approvals, funding, agent lifecycle, and monitoring.
 
 Full spec: `PROJECT_SPEC.md`
 
@@ -11,7 +11,7 @@ Full spec: `PROJECT_SPEC.md`
 ## Architecture (TL;DR)
 
 ```
-L1 (Funding, SELF-CUSTODY):  Standard Taproot address (P2TR, BIP 86) on testnet
+L1 (Funding, SELF-CUSTODY):  Standard Taproot address (P2TR, BIP 86) on mainnet
                               Passkey derives the key AND signs on-chain txs
                               Server has ZERO access to funding wallet
                               No agent, no co-signer, no covenants
@@ -22,11 +22,12 @@ L2 (Spending, CUSTODIAL):    LND + litd on our server
                               User explicitly funds L2 from L1
                               Self-custodial option: user runs own LND node
 
-Agent (Claude via MCP):      MCP server exposes: pay_invoice, get_balance,
-                              get_budget_status, request_topup, create_invoice,
-                              list_payments
+Agent (Claude via MCP):      MCP server exposes 7 tools: pay_invoice, get_balance,
+                              get_budget_status, request_approval, request_topup,
+                              create_invoice, list_payments
                               Claude IS the agent — no custom bot code
                               Budget enforced by LND RPC middleware (macaroon)
+                              Auto-pay threshold: user-configurable per-payment limit
 
 Control Plane:               WebAuthn passkey (PRF extension)
                               L1: derives signing key (passkey IS the key)
@@ -40,9 +41,10 @@ Control Plane:               WebAuthn passkey (PRF extension)
 
 - **Frontend:** Next.js (React) + Tailwind CSS — web app is primary target
 - **Backend:** Node.js + Express — REST API + WebSocket
-- **MCP Server:** Node.js (MCP SDK) — exposes wallet tools to Claude, holds scoped macaroon
+- **MCP Server:** Node.js (MCP SDK) — exposes 7 wallet tools to Claude, holds scoped macaroon
 - **AI Agent:** Claude (user's existing subscription) — no custom agent runtime
 - **Lightning:** LND v0.18+ wrapped by litd — accounts, macaroon bakery, RPC middleware
+- **Network:** Bitcoin mainnet (real sats)
 - **Passkey:** @simplewebauthn/browser + PRF extension (client-side key derivation)
 - **Tx Signing:** bitcoinjs-lib + bip39 + tiny-secp256k1 (in browser, never on server)
 - **Database:** SQLite or Postgres — user accounts, agent configs, tx history
@@ -79,8 +81,8 @@ aegis/
 │   │       ├── schema.sql         # User accounts, agent configs, tx history
 │   │       └── index.js           # Database access layer
 │   └── scripts/
-│       ├── setup-lnd.sh           # LND + litd setup script
-│       └── fund-wallet.sh         # Get testnet coins from faucet
+│       ├── docker-compose.yml      # LND + litd Docker setup
+│       └── fund-wallet.sh         # Fund LND wallet
 ├── web/                            # Next.js (primary frontend)
 │   ├── package.json
 │   ├── next.config.js
@@ -127,7 +129,7 @@ aegis/
 
 - **Node.js:** v22.17.0 (via nvm)
 - **npm:** 11.6.0
-- **Network:** testnet (Bitcoin testnet for hackathon)
+- **Network:** mainnet (real bitcoin for demo)
 - **nunchuk-cli:** v0.1.0 (installed globally) — fallback L1 custody model
 - **Nunchuk auth:** praneethgunasekaran@gmail.com
 
@@ -136,7 +138,7 @@ aegis/
 ```bash
 LND_HOST=localhost:10009
 LND_CERT_PATH=~/.lnd/tls.cert
-LND_MACAROON_PATH=~/.lnd/data/chain/bitcoin/testnet/admin.macaroon
+LND_MACAROON_PATH=~/.lnd/data/chain/bitcoin/mainnet/admin.macaroon
 LITD_HOST=localhost:8443
 PORT=3001
 NEXT_PUBLIC_API_URL=http://localhost:3001
@@ -151,8 +153,8 @@ NEXT_PUBLIC_API_URL=http://localhost:3001
 ```
 PRF(passkey_credential, salt="aegis-wallet-v1") → 32 bytes
 → BIP39 mnemonic (never shown) → BIP32 master key
-→ funding_key:  m/86h/1h/0h/0/0  (Taproot, testnet) — SIGNS L1 txs
-→ auth_key:     m/84h/1h/0h/0/0  (Native SegWit, for L2 auth only)
+→ funding_key:  m/86h/0h/0h/0/0  (Taproot, mainnet) — SIGNS L1 txs
+→ auth_key:     m/84h/0h/0h/0/0  (Native SegWit, mainnet, for L2 auth only)
 ```
 
 **Passkey role per layer:**
@@ -165,14 +167,14 @@ PRF(passkey_credential, salt="aegis-wallet-v1") → 32 bytes
 
 ```
 Address type: P2TR (Taproot, BIP 86)
-Key:          funding_key = master / 86h / 1h / 0h / 0 / 0
-Network:      testnet (hackathon), mainnet (production)
+Key:          funding_key = master / 86h / 0h / 0h / 0 / 0
+Network:      mainnet (bc1p... address format)
 
 Operations:
   - Receive: backend returns the Taproot address
   - Fund L2: user signs tx in browser → sends to LND's on-chain address
   - Send to address: user signs tx in browser → standard payment
-  - Balance: backend queries testnet node for UTXO set
+  - Balance: backend queries mainnet node for UTXO set
 
 No agent. No server-side key. No covenants.
 Passkey-derived key signs all L1 transactions in the browser.
@@ -209,12 +211,13 @@ litcli accounts create 50000 --save_to /tmp/agent.macaroon
 ```
 MCP Server (Node.js, @modelcontextprotocol/sdk):
   Tools exposed to Claude:
-  - pay_invoice(bolt11, purpose)       → pay LN invoice within budget
-  - create_invoice(amount_sats, memo)  → generate invoice to receive
-  - get_balance()                      → read agent's budget balance
-  - get_budget_status()                → remaining budget + spend history
-  - request_topup(amount_sats, reason) → ask user for more budget (WS → biometric)
-  - list_payments(limit)               → agent's own payment history
+  - pay_invoice(bolt11, purpose)           → pay LN invoice within budget, return preimage
+  - create_invoice(amount_sats, memo)      → generate invoice to receive
+  - get_balance()                          → budget balance + auto_pay_threshold_sats
+  - get_budget_status()                    → remaining budget + spend history
+  - request_approval(amount_sats, reason)  → approve THIS specific payment (over threshold) → WS → biometric
+  - request_topup(amount_sats, reason)     → increase overall budget → WS → biometric
+  - list_payments(limit)                   → agent's payment history (tagged auto/manual approval)
 
   NOT exposed to Claude:
   - No on-chain tools (L1 funding wallet invisible to Claude)
@@ -257,7 +260,7 @@ No separate register/login flow.
 
 ## Nunchuk CLI (Fallback for L1)
 
-If the standard Taproot approach needs policy enforcement without covenants, use Nunchuk's platform key for L1 policy enforcement on testnet:
+If the standard Taproot approach needs policy enforcement without covenants, use Nunchuk's platform key for L1 policy enforcement:
 
 ```bash
 nunchuk sandbox create --name "Aegis Vault" --m 2 --n 3
@@ -287,20 +290,34 @@ Full Nunchuk CLI reference: `nunchuk --help`.
 ## POC Scope (Must Have for Demo Day)
 
 1. Passkey wallet creation (WebAuthn PRF, no seed phrase)
-2. Funding address (L1) — Taproot from passkey-derived key, receive testnet BTC, display balance
+2. Funding address (L1) — Taproot (bc1p...) from passkey-derived key, receive mainnet BTC, display balance
 3. Fund Lightning from funding wallet (biometric approval, passkey signs in browser)
-4. MCP server with wallet tools (pay_invoice, get_balance, get_budget_status, request_topup, create_invoice, list_payments)
+4. MCP server with 7 wallet tools (pay_invoice, get_balance, get_budget_status, request_approval, request_topup, create_invoice, list_payments)
 5. Agent pairing flow (QR/config → Claude connected via MCP, macaroon stays server-side)
-6. Claude makes autonomous payment within budget
-7. Budget enforcement (Claude overspends → denied by LND middleware → escalates)
-8. User approval for budget top-up (websocket + biometric)
-9. Unified balance display (L1 funding + L2 spending, USD primary)
+6. Auto-pay threshold — user-configurable per-payment limit, returned by get_balance()
+7. Claude makes autonomous payment within budget + threshold (auto-approved)
+8. Budget enforcement (Claude overspends → denied by LND middleware → escalates)
+9. Payment approval (Claude pays over threshold → request_approval → biometric → approved/denied)
+10. Budget top-up (Claude's budget exhausted → request_topup → biometric → budget extended)
+11. Unified balance display (L1 funding + L2 spending, USD primary)
+
+### Demo Scenario
+
+User asks Claude: "Buy me coolproject.co"
+→ Claude searches unhuman.domains API → domain available ($8)
+→ Claude registers → gets HTTP 402 + Lightning invoice (L402)
+→ Claude checks: invoice amount vs user's auto-pay threshold
+→ Over threshold → request_approval → user gets biometric prompt → approves
+→ Claude pays real Lightning invoice → gets preimage
+→ Claude completes registration with L402 auth header → domain purchased
+→ User sees payment in wallet activity feed
+
+unhuman.domains API: https://unhuman.domains (native L402, real Lightning invoices)
 
 ### Nice to Have
 
 - Agent delegation (Claude attenuates macaroon, creates sub-agent accounts)
 - Mobile app (React Native + Expo)
-- L402 API payments (Claude auto-pays paywalls)
 - Airgapped QR pairing (credentials via camera only)
 - Self-custodial L2 (user runs own LND node)
 
@@ -308,27 +325,23 @@ Full Nunchuk CLI reference: `nunchuk --help`.
 
 ## Infrastructure Setup
 
+LND and litd run in Docker (already configured). Backend and frontend run locally.
+
 ```bash
-# 1. Start LND on testnet
-lnd --bitcoin.testnet --bitcoin.node=neutrino --debuglevel=info
+# 1. Start LND + litd via Docker
+docker compose up -d
 
-# 2. Create LND wallet
-lncli create
+# 2. Fund the wallet (if not already funded)
+docker exec aegis-lnd lncli newaddress p2tr
+# Send mainnet sats to this address
 
-# 3. Start litd (wraps LND for account system)
-litd --uipassword=aegis123 --lnd-mode=integrated --network=testnet
+# 3. Open channel (after funding)
+docker exec aegis-lnd lncli openchannel --node_key <peer_pubkey> --local_amt 1000000
 
-# 4. Get testnet coins
-lncli newaddress p2tr
-# Send testnet coins to this address from faucet
-
-# 5. Open channel (after funding)
-lncli openchannel --node_key <peer_pubkey> --local_amt 1000000
-
-# 6. Backend
+# 4. Backend
 cd aegis/backend && npm install && npm run dev
 
-# 7. Frontend
+# 5. Frontend
 cd aegis/web && npm install && npm run dev
 ```
 

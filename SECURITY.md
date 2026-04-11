@@ -33,7 +33,9 @@ The passkey credential ID IS the user identity. There is no separate registratio
 
 | Capability | Agent Access |
 |------------|-------------|
-| Pay Lightning invoices (within budget) | Yes |
+| Pay Lightning invoices (within budget) via MCP | Yes — 7 tools exposed |
+| Request approval for over-threshold payments | Yes — triggers user biometric |
+| Request budget top-up | Yes — triggers user biometric |
 | Create Lightning invoices | Yes |
 | View own payment history | Yes |
 | Access on-chain funds or funding wallet | **No** |
@@ -48,8 +50,8 @@ All keys are derived client-side from WebAuthn PRF output:
 ```
 PRF(passkey, "aegis-wallet-v1") → 32 bytes
   → BIP39 mnemonic → BIP32 master
-  → funding_key:  m/86h/1h/0h/0/0  (signs L1 txs)
-  → auth_key:     m/84h/1h/0h/0/0  (L2 auth only)
+  → funding_key:  m/86h/0h/0h/0/0  (signs L1 txs, mainnet)
+  → auth_key:     m/84h/0h/0h/0/0  (L2 auth only, mainnet)
 ```
 
 Key material exists in browser memory only during active signing operations, then is discarded. The mnemonic is never displayed, stored, or transmitted.
@@ -75,7 +77,7 @@ If you discover a security vulnerability in Aegis, **please report it responsibl
 - Email security concerns to the maintainers (see contact below)
 - Include a clear description of the vulnerability and steps to reproduce
 - Allow reasonable time for a fix before public disclosure
-- Scope your testing to testnet — never test against mainnet funds
+- Scope your testing to signet/testnet when possible — coordinate with maintainers before testing on mainnet
 
 ### Don't
 
@@ -107,7 +109,7 @@ The following are in scope for security reports:
 The following are **out of scope**:
 
 - Vulnerabilities in upstream dependencies (LND, litd) — report these to their respective projects
-- Denial-of-service against the testnet node
+- Denial-of-service against the Lightning node
 - Social engineering attacks
 - Issues that require physical access to the user's device
 

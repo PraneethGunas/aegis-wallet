@@ -13,7 +13,7 @@ Aegis splits custody across two layers:
 ```
 ┌─────────────────────────────────────────────────┐
 │  L1: FUNDING WALLET (Self-Custody)              │
-│  Standard Taproot address on testnet.            │
+│  Standard Taproot address on mainnet.            │
 │  Passkey derives your key AND signs txs.         │
 │  Server has ZERO access to funding wallet.       │
 ├─────────────────────────────────────────────────┤
@@ -27,7 +27,7 @@ Aegis splits custody across two layers:
 └─────────────────────────────────────────────────┘
 ```
 
-**Layer 1 (Funding)** — A standard Taproot address on Bitcoin testnet. Your passkey derives the private key AND signs all on-chain transactions — the passkey IS the key. It never leaves your browser. This is a simple self-custody funding wallet. No covenants, no multi-sig, no agent involvement. If our server disappears, you still have your key.
+**Layer 1 (Funding)** — A standard Taproot address on Bitcoin mainnet. Your passkey derives the private key AND signs all on-chain transactions — the passkey IS the key. It never leaves your browser. This is a simple self-custody funding wallet. No covenants, no multi-sig, no agent involvement. If our server disappears, you still have your key.
 
 **Layer 2 (Spending)** — An LND Lightning node wrapped by litd. Claude gets wallet tools via an MCP server backed by a scoped macaroon (a cryptographic bearer token) with a hard spending ceiling enforced by LND's RPC middleware. Payments are instant. Claude can pay invoices, check balances, and request more budget — all within its ceiling. Anything above the limit triggers a biometric approval prompt. The passkey authenticates you to our backend on L2 but does NOT sign Lightning transactions — LND holds those keys.
 
@@ -43,8 +43,8 @@ Aegis splits custody across two layers:
 │                                                        │
 │  Secure Enclave ──→ Passkey (PRF) ──→ Key Derivation │
 │                                                        │
-│  funding_key:  m/86h/1h/0h/0/0  (Taproot, L1 signer)│
-│  auth_key:     m/84h/1h/0h/0/0  (L2 auth only)      │
+│  funding_key:  m/86h/0h/0h/0/0  (Taproot, L1 signer)│
+│  auth_key:     m/84h/0h/0h/0/0  (L2 auth only)      │
 │                                                        │
 │  On-chain transactions signed HERE, in the browser.   │
 │  Keys NEVER sent to the server.                        │
@@ -63,8 +63,9 @@ Aegis splits custody across two layers:
 │  Claude               │  MCP   │  Aegis MCP Server     │
 │  (Code / Cowork /     │◄──────►│  ├─ pay_invoice       │
 │   Chat + MCP)         │        │  ├─ get_balance       │
-│                        │        │  ├─ request_topup     │
-│  Claude IS the agent.  │        │  └─ macaroon (hidden) │
+│                        │        │  ├─ request_approval  │
+│  Claude IS the agent.  │        │  ├─ request_topup     │
+│                        │        │  └─ macaroon (hidden) │
 └──────────────────────┘         └──────────────────────┘
 ```
 
@@ -76,9 +77,15 @@ Claude calls pay_invoice via MCP
   → LND RPC middleware checks: virtual balance >= amount + fees?
     YES → payment proceeds, balance deducted
     NO  → "insufficient balance" — payment rejected
-  → Claude sees the denial, calls request_topup → user gets biometric prompt
-  → Agent cannot see on-chain funds, node channels, or real balance
-  → Agent cannot bake new macaroons or escalate permissions
+
+Two escalation paths:
+  → Payment over auto-pay threshold: Claude calls request_approval
+    → User gets biometric prompt for THIS specific payment
+  → Budget exhausted: Claude calls request_topup
+    → User approves increasing the overall budget
+
+Claude cannot see on-chain funds, node channels, or real balance.
+Claude cannot bake new macaroons or escalate permissions.
 ```
 
 ---
@@ -95,7 +102,7 @@ Claude calls pay_invoice via MCP
 | Passkey | @simplewebauthn/browser + PRF extension |
 | Tx Signing | bitcoinjs-lib + tiny-secp256k1 (in browser, never on server) |
 | Database | SQLite (dev) / Postgres (prod) |
-| Network | Bitcoin testnet |
+| Network | Bitcoin mainnet |
 
 ---
 
@@ -104,35 +111,27 @@ Claude calls pay_invoice via MCP
 ### Prerequisites
 
 - Node.js 22+ (`nvm install 22`)
-- [LND v0.18+](https://github.com/lightningnetwork/lnd/releases)
-- [litd](https://github.com/lightninglabs/lightning-terminal/releases) (Lightning Terminal)
+- Docker + Docker Compose (for LND + litd)
 
-### 1. Start LND + litd
+### 1. Start LND + litd (Docker)
 
 ```bash
-# Start LND on testnet
-lnd --bitcoin.testnet --bitcoin.node=neutrino --debuglevel=info
-
-# Create wallet (first run only)
-lncli create
-
-# Start litd (wraps LND for account system)
-litd --uipassword=<your-password> \
-     --lnd-mode=integrated \
-     --network=testnet
+docker compose up -d
 ```
 
-### 2. Fund with Testnet Coins
+LND and litd run in Docker containers on mainnet.
+
+### 2. Fund the Wallet
 
 ```bash
-lncli newaddress p2tr
-# Send testnet coins to this address from a faucet
+docker exec aegis-lnd lncli newaddress p2tr
+# Send mainnet sats to this address
 ```
 
 ### 3. Open a Lightning Channel
 
 ```bash
-lncli openchannel --node_key <peer_pubkey> --local_amt 1000000
+docker exec aegis-lnd lncli openchannel --node_key <peer_pubkey> --local_amt 1000000
 ```
 
 ### 4. Start the Backend
@@ -159,7 +158,7 @@ Create `backend/.env` from the example:
 ```bash
 LND_HOST=localhost:10009
 LND_CERT_PATH=~/.lnd/tls.cert
-LND_MACAROON_PATH=~/.lnd/data/chain/bitcoin/testnet/admin.macaroon
+LND_MACAROON_PATH=~/.lnd/data/chain/bitcoin/mainnet/admin.macaroon
 LITD_HOST=localhost:8443
 PORT=3001
 NEXT_PUBLIC_API_URL=http://localhost:3001
@@ -226,8 +225,8 @@ Auth: Every request includes a WebAuthn assertion or short-lived token from a re
 ```
 WebAuthn PRF(credential, salt="aegis-wallet-v1") → 32 bytes entropy
   → BIP39 mnemonic (never displayed) → BIP32 master key
-  → funding_key:  m/86h/1h/0h/0/0  (Taproot, testnet — signs L1 txs)
-  → auth_key:     m/84h/1h/0h/0/0  (testnet — L2 auth only)
+  → funding_key:  m/86h/0h/0h/0/0  (Taproot, mainnet — signs L1 txs)
+  → auth_key:     m/84h/0h/0h/0/0  (mainnet — L2 auth only)
 ```
 
 Recovery: passkey syncs via iCloud/Google → same entropy → same keys → wallet restored.
