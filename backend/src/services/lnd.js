@@ -213,3 +213,7 @@ export async function listUnspent() {
 export async function getInfo() {
   return lndRequest("/v1/getinfo");
 }
+
+export async function getTransactions() {
+  return lndRequest("/v1/transactions");
+}

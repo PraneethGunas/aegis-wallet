@@ -150,28 +150,67 @@ router.post("/receive", auth, async (req, res, next) => {
 router.get("/history", auth, async (req, res, next) => {
   try {
     const limit = parseInt(req.query.limit) || 20;
-    // Get DB transactions
-    const dbTxs = db.getTransactions(null, limit) || [];
+    const transactions = [];
 
-    // Also get LND payment history
-    let lndPayments = [];
+    // 1. Agent transactions from our DB
+    const dbTxs = db.getTransactions(null, limit) || [];
+    for (const tx of dbTxs) {
+      transactions.push({
+        id: `db_${tx.id}`,
+        type: tx.agent_id ? "agent" : tx.type === "payment" ? "send" : tx.type,
+        description: tx.purpose || `${tx.type} ${tx.amount_sats} sats`,
+        amount: tx.type === "invoice" ? tx.amount_sats : -tx.amount_sats,
+        amountSats: tx.amount_sats,
+        isAgent: !!tx.agent_id,
+        approvalType: tx.approval_type,
+        txid: tx.payment_hash,
+        timestamp: tx.created_at,
+      });
+    }
+
+    // 2. On-chain transactions from LND
     try {
-      lndPayments = await lnd.listPayments(null, limit);
+      const onchain = await lnd.getTransactions();
+      for (const tx of onchain.transactions || []) {
+        const amountSats = parseInt(tx.amount || "0");
+        transactions.push({
+          id: `onchain_${tx.tx_hash}`,
+          type: amountSats >= 0 ? "receive" : "send",
+          description: amountSats >= 0 ? "Received on-chain" : "Sent on-chain",
+          amount: amountSats >= 0 ? Math.abs(amountSats) : amountSats,
+          amountSats: Math.abs(amountSats),
+          isAgent: false,
+          approvalType: null,
+          txid: tx.tx_hash,
+          timestamp: new Date(parseInt(tx.time_stamp) * 1000).toISOString(),
+          confirmations: parseInt(tx.num_confirmations || "0"),
+        });
+      }
     } catch {}
 
-    const transactions = dbTxs.map((tx) => ({
-      id: tx.id,
-      type: tx.agent_id ? "agent" : tx.type === "payment" ? "send" : tx.type,
-      description: tx.purpose || `${tx.type} ${tx.amount_sats} sats`,
-      amount: tx.type === "invoice" ? tx.amount_sats : -tx.amount_sats,
-      amountSats: tx.amount_sats,
-      isAgent: !!tx.agent_id,
-      approvalType: tx.approval_type,
-      txid: tx.payment_hash,
-      timestamp: tx.created_at,
-    }));
+    // 3. Lightning payments from LND
+    try {
+      const lnPayments = await lnd.listPayments(null, limit);
+      for (const p of lnPayments) {
+        if (transactions.some(t => t.id === `db_${p.payment_hash}`)) continue; // skip duplicates
+        transactions.push({
+          id: `ln_${p.timestamp}`,
+          type: "send",
+          description: `Lightning payment`,
+          amount: -p.amount_sats,
+          amountSats: p.amount_sats,
+          isAgent: false,
+          approvalType: null,
+          txid: null,
+          timestamp: p.timestamp,
+        });
+      }
+    } catch {}
 
-    res.json({ transactions });
+    // Sort by timestamp descending
+    transactions.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+    res.json({ transactions: transactions.slice(0, limit) });
   } catch (err) { next(err); }
 });
 
