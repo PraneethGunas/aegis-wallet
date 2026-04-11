@@ -55,6 +55,13 @@ coverage/
 # Research docs (not part of repo)
 *.docx
 
+# Docker data
+*.db-wal
+*.db-shm
+
+# Local task tracking
+TASKS.md
+
 # Misc
 *.tgz
 *.pid
