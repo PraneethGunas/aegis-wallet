@@ -1,15 +1,34 @@
 "use client";
 
-import { useState } from "react";
-import { Copy, Check, X } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Copy, Check, X, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { QRCodeSVG } from "qrcode.react";
+import * as api from "@/lib/api";
 
-export default function FundingFlow({ isOpen, onClose, fundingAddress }) {
+export default function FundingFlow({ isOpen, onClose, fundingAddress: propAddress }) {
   const [copied, setCopied] = useState(false);
+  const [address, setAddress] = useState(propAddress || null);
+  const [loading, setLoading] = useState(false);
+
+  // Fetch from backend if no client-side address
+  useEffect(() => {
+    if (propAddress) {
+      setAddress(propAddress);
+      return;
+    }
+    if (!isOpen || address) return;
+
+    setLoading(true);
+    api.wallet.getFundingAddress()
+      .then((res) => setAddress(res.address))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [isOpen, propAddress, address]);
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(fundingAddress);
+    if (!address) return;
+    navigator.clipboard.writeText(address);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -33,14 +52,18 @@ export default function FundingFlow({ isOpen, onClose, fundingAddress }) {
             </div>
 
             <div className="text-center space-y-3">
-              {fundingAddress ? (
+              {loading ? (
+                <div className="py-6">
+                  <Loader2 className="w-5 h-5 animate-spin mx-auto text-muted-foreground" />
+                </div>
+              ) : address ? (
                 <>
                   <div className="inline-block p-3 bg-white rounded-xl border border-border/30">
-                    <QRCodeSVG value={fundingAddress} size={160} />
+                    <QRCodeSVG value={address} size={160} />
                   </div>
                   <div className="flex items-center gap-2">
                     <code className="flex-1 px-3 py-2 rounded-lg glass border border-border/50 font-mono text-[11px] break-all text-left">
-                      {fundingAddress}
+                      {address}
                     </code>
                     <button onClick={handleCopy} className="p-2 rounded-lg glass border border-border/50 flex-shrink-0 hover:bg-muted transition-colors">
                       {copied ? <Check className="w-3.5 h-3.5 text-success-green" /> : <Copy className="w-3.5 h-3.5" />}
@@ -49,7 +72,7 @@ export default function FundingFlow({ isOpen, onClose, fundingAddress }) {
                   <p className="text-[11px] text-muted-foreground font-mono">taproot address (bc1p...)</p>
                 </>
               ) : (
-                <p className="text-sm text-muted-foreground py-4">Authenticate to view address</p>
+                <p className="text-sm text-muted-foreground py-4">Could not load address</p>
               )}
             </div>
           </div>
