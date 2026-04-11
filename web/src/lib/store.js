@@ -132,6 +132,9 @@ export function WalletProvider({ children }) {
         api.setAuthToken(result.token);
       }
 
+      // Persist funding address locally — public data, safe for localStorage
+      localStorage.setItem("aegis_funding_address", fundingAddress);
+
       dispatch({
         type: "SET_AUTHENTICATED",
         credentialId,
@@ -161,6 +164,9 @@ export function WalletProvider({ children }) {
       // For now, use the credential ID as a bearer token
       api.setAuthToken(credentialId);
 
+      // Persist funding address locally — public data, safe for localStorage
+      localStorage.setItem("aegis_funding_address", fundingAddress);
+
       dispatch({
         type: "SET_AUTHENTICATED",
         credentialId,
@@ -181,6 +187,7 @@ export function WalletProvider({ children }) {
     bitcoin.discardKeys();
     passkey.clearCredential();
     api.setAuthToken(null);
+    localStorage.removeItem("aegis_funding_address");
     ws.disconnect();
     dispatch({ type: "LOGOUT" });
   }, []);
@@ -367,15 +374,16 @@ export function WalletProvider({ children }) {
     return () => unsubs.forEach((unsub) => unsub());
   }, [fetchBalance, fetchTransactions, fetchAgentStatus]);
 
-  // Restore session on mount
+  // Restore session on mount — credential in passkey storage, address in localStorage
   useEffect(() => {
     const credentialId = passkey.getCredentialId();
     const token = api.getAuthToken();
+    const fundingAddress = localStorage.getItem("aegis_funding_address");
     if (credentialId && token) {
       dispatch({
         type: "SET_AUTHENTICATED",
         credentialId,
-        fundingAddress: null, // Will be set after re-auth
+        fundingAddress,
       });
       ws.connect();
     }
