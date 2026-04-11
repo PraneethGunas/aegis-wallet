@@ -27,6 +27,62 @@ users.set("user_1", {
   created_at: new Date().toISOString(),
 });
 
+transactions.push(
+  {
+    id: "tx_seed_1",
+    agent_id: "agent_1",
+    type: "payment",
+    amount_sats: 12000,
+    purpose: "Mempool.space API access",
+    bolt11: "lnbc12000n1seedapi",
+    payment_hash: "seedhash1".repeat(8),
+    status: "settled",
+    approval_type: "auto",
+    approval_id: null,
+    created_at: new Date(Date.now() - 1000 * 60 * 42).toISOString(),
+  },
+  {
+    id: "tx_seed_2",
+    agent_id: "agent_1",
+    type: "payment",
+    amount_sats: 18000,
+    purpose: "Domain registration for aegiswallet.co",
+    bolt11: "lnbc18000n1seeddomain",
+    payment_hash: "seedhash2".repeat(8),
+    status: "settled",
+    approval_type: "manual",
+    approval_id: "apr_seed_1",
+    created_at: new Date(Date.now() - 1000 * 60 * 60 * 3).toISOString(),
+  }
+);
+
+auditLog.push(
+  {
+    agent_id: "agent_1",
+    tool: "pay_invoice",
+    params_summary: "12000 sats - Mempool.space API access",
+    outcome: "settled, 37988 sats remaining",
+    duration_ms: 842,
+    timestamp: new Date(Date.now() - 1000 * 60 * 42).toISOString(),
+  },
+  {
+    agent_id: "agent_1",
+    tool: "request_approval",
+    params_summary: "18000 sats - Domain registration for aegiswallet.co",
+    outcome: "approved",
+    duration_ms: 16224,
+    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 3 - 1000 * 60 * 5).toISOString(),
+  },
+  {
+    agent_id: "agent_1",
+    tool: "pay_invoice",
+    params_summary: "18000 sats - Domain registration for aegiswallet.co",
+    outcome: "settled, 19970 sats remaining",
+    duration_ms: 1154,
+    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 3).toISOString(),
+  }
+);
+
 // ── Agents ────────────────────────────────────────────────────────────────────
 export function getAgent(authToken) {
   return agents.get(authToken) || null;
