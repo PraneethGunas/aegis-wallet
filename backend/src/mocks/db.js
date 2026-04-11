@@ -7,6 +7,7 @@ import * as sharedStore from "./shared-store.js";
 let idCounter = 1;
 const agents = new Map();
 const transactions = [];
+const auditLog = [];
 const users = new Map();
 
 // ── Seed default data ─────────────────────────────────────────────────────────
@@ -56,9 +57,9 @@ export function updateAgentStatus(agentId, status) {
 }
 
 // ── Transactions ──────────────────────────────────────────────────────────────
-export function createTransaction({ agent_id, type, amount_sats, purpose, bolt11, status, approval_type }) {
+export function createTransaction({ agent_id, type, amount_sats, purpose, bolt11, payment_hash, status, approval_type, approval_id }) {
   const id = `tx_${idCounter++}`;
-  const tx = { id, agent_id, type, amount_sats, purpose, bolt11, status, approval_type, created_at: new Date().toISOString() };
+  const tx = { id, agent_id, type, amount_sats, purpose, bolt11, payment_hash, status, approval_type, approval_id, created_at: new Date().toISOString() };
   transactions.push(tx);
   return { id };
 }
@@ -68,6 +69,13 @@ export function getTransactions(agentId, limit = 10) {
     .filter((tx) => tx.agent_id === agentId)
     .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
     .slice(0, limit);
+}
+
+/** Returns the settled transaction for a given payment_hash, or null. */
+export function getTransactionByPaymentHash(paymentHash) {
+  return transactions.find(
+    (tx) => tx.payment_hash === paymentHash && tx.status === "settled"
+  ) || null;
 }
 
 export function getAgentSpendingToday(agentId) {
@@ -92,6 +100,30 @@ export function getApproval(approvalId) {
 
 export function updateApprovalStatus(approvalId, status) {
   return sharedStore.updateApprovalStatus(approvalId, status);
+}
+
+// ── Audit log ─────────────────────────────────────────────────────────────────
+/**
+ * Record a tool invocation for audit and activity feed purposes.
+ * Stores: tool name, agent, human-readable params summary, outcome, timing.
+ * Intentionally omits raw bolt11 strings and secrets.
+ */
+export function logToolCall({ agent_id, tool, params_summary, outcome, duration_ms }) {
+  auditLog.push({
+    agent_id,
+    tool,
+    params_summary,
+    outcome,
+    duration_ms,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+export function getAuditLog(agentId, limit = 50) {
+  return auditLog
+    .filter((e) => e.agent_id === agentId)
+    .slice(-limit)
+    .reverse();
 }
 
 // ── Users ─────────────────────────────────────────────────────────────────────

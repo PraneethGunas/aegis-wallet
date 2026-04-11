@@ -7,9 +7,10 @@
  * Everything else stays in-memory.
  */
 import fs from "fs";
+import os from "os";
 import path from "path";
 
-const STORE_PATH = path.join("/tmp", "aegis-approvals.json");
+const STORE_PATH = path.join(os.tmpdir(), "aegis-approvals.json");
 
 function readStore() {
   try {

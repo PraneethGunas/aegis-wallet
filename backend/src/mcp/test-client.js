@@ -5,13 +5,14 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { fileURLToPath } from "url";
+import os from "os";
 import path from "path";
 import fs from "fs";
 import * as sharedStore from "../mocks/shared-store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const serverPath = path.join(__dirname, "server.js");
-const APPROVALS_FILE = "/tmp/aegis-approvals.json";
+const APPROVALS_FILE = path.join(os.tmpdir(), "aegis-approvals.json");
 
 function parse(result) {
   return JSON.parse(result.content[0].text);

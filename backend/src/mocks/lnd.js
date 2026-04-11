@@ -35,13 +35,34 @@ export async function sendPayment(bolt11, macaroon) {
 }
 
 export async function decodeInvoice(bolt11) {
-  // Extract a fake amount from the invoice string, or default to 10000
+  // Reject anything that doesn't look like a Lightning invoice
+  if (!bolt11 || !bolt11.startsWith("lnbc")) {
+    return {
+      is_valid: false,
+      error: "not a Lightning invoice — must start with 'lnbc'",
+    };
+  }
+
+  // Allow tests/demos to simulate an expired invoice with lnbc_expired_<...>
+  if (bolt11.includes("_expired_")) {
+    return {
+      is_valid: true,
+      is_expired: true,
+      payment_hash: deriveMockPaymentHash(bolt11),
+      amount_sats: extractMockAmount(bolt11),
+      description: "Mock expired invoice",
+      expiry_seconds: 0,
+    };
+  }
+
   const amount = extractMockAmount(bolt11);
   return {
+    is_valid: true,
+    is_expired: false,
+    payment_hash: deriveMockPaymentHash(bolt11),
     amount_sats: amount,
     description: "Mock invoice",
     expiry_seconds: 900,
-    is_expired: false,
   };
 }
 
@@ -80,4 +101,18 @@ function extractMockAmount(bolt11) {
   // Try to pull a number out of the string, otherwise default
   const match = bolt11.match(/lnbc(\d+)/);
   return match ? parseInt(match[1], 10) : 10000;
+}
+
+/**
+ * Deterministic payment hash derived from the bolt11 string.
+ * Same invoice always produces the same hash — required for idempotency checks.
+ * In production, real LND decodes this from the invoice itself.
+ */
+function deriveMockPaymentHash(bolt11) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < bolt11.length; i++) {
+    h ^= bolt11.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0").repeat(8);
 }
