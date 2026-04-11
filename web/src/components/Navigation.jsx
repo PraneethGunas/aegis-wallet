@@ -2,111 +2,79 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Send, Download, Bot, Settings, Wallet } from "lucide-react";
+import { LayoutDashboard, Settings } from "lucide-react";
 import { motion } from "motion/react";
-import ApprovalModal from "./ApprovalModal";
-import { useWallet } from "@/lib/store";
 
 const navItems = [
-  { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
-  { icon: Send, label: "Send", path: "/send" },
-  { icon: Download, label: "Receive", path: "/receive" },
-  { icon: Bot, label: "Agent", path: "/agent" },
+  { icon: LayoutDashboard, label: "Home", path: "/dashboard" },
   { icon: Settings, label: "Settings", path: "/settings" },
 ];
 
 export default function Navigation({ children }) {
   const pathname = usePathname();
-  const isWelcome = pathname === "/";
-  const { pendingApproval, approveRequest, denyRequest, btcPrice } = useWallet();
 
-  if (isWelcome) {
-    return <>{children}</>;
-  }
-
-  const approvalAmount = pendingApproval
-    ? (pendingApproval.amountSats / 100_000_000) * btcPrice
-    : 0;
+  if (pathname === "/") return <>{children}</>;
 
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden">
-      {/* Desktop Sidebar */}
-      <aside className="hidden md:flex w-20 flex-col items-center py-8 bg-sidebar border-r border-border">
-        <Link href="/dashboard" className="mb-12">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
-            <Wallet className="w-6 h-6 text-white" />
-          </div>
-        </Link>
+      {/* Desktop — thin sidebar, icons only */}
+      <aside className="hidden md:flex w-16 flex-col items-center py-6 bg-sidebar/50 border-r border-border/50">
+        <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary/80 to-primary/40 mb-10" />
 
-        <nav className="flex-1 flex flex-col gap-6">
+        <nav className="flex flex-col gap-3">
           {navItems.map((item) => {
             const isActive = pathname === item.path;
             const Icon = item.icon;
             return (
-              <Link key={item.path} href={item.path} className="relative group">
+              <Link key={item.path} href={item.path}>
                 <motion.div
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  className={`w-12 h-12 rounded-xl flex items-center justify-center transition-colors ${
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.9 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 17 }}
+                  className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${
                     isActive
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                      ? "bg-foreground/10 text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
-                  <Icon className="w-5 h-5" />
+                  <Icon className="w-[18px] h-[18px]" strokeWidth={isActive ? 2.2 : 1.8} />
                 </motion.div>
-                {isActive && (
-                  <motion.div
-                    layoutId="activeIndicator"
-                    className="absolute -right-3 top-1/2 -translate-y-1/2 w-1 h-8 bg-primary rounded-l-full"
-                  />
-                )}
               </Link>
             );
           })}
         </nav>
       </aside>
 
-      {/* Main Content */}
       <main className="flex-1 overflow-auto">{children}</main>
 
-      {/* Mobile Bottom Navigation */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-sidebar border-t border-border">
-        <div className="flex justify-around items-center h-16 px-4">
+      {/* Mobile — floating pill bar */}
+      <nav className="md:hidden fixed bottom-5 left-1/2 -translate-x-1/2 z-40">
+        <motion.div
+          initial={{ y: 20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          className="flex gap-2 px-3 py-2 rounded-2xl glass-strong border border-border/50"
+        >
           {navItems.map((item) => {
             const isActive = pathname === item.path;
             const Icon = item.icon;
             return (
-              <Link
-                key={item.path}
-                href={item.path}
-                className="flex-1 flex flex-col items-center justify-center"
-              >
+              <Link key={item.path} href={item.path}>
                 <motion.div
-                  whileTap={{ scale: 0.9 }}
-                  className={`transition-colors ${
-                    isActive ? "text-primary" : "text-muted-foreground"
+                  whileTap={{ scale: 0.85 }}
+                  transition={{ type: "spring", stiffness: 500, damping: 20 }}
+                  className={`w-11 h-11 rounded-xl flex items-center justify-center transition-colors ${
+                    isActive
+                      ? "bg-foreground/10 text-foreground"
+                      : "text-muted-foreground"
                   }`}
                 >
-                  <Icon className="w-5 h-5" />
+                  <Icon className="w-[18px] h-[18px]" strokeWidth={isActive ? 2.2 : 1.8} />
                 </motion.div>
               </Link>
             );
           })}
-        </div>
+        </motion.div>
       </nav>
-
-      {/* Approval Modal — triggered by real WebSocket events */}
-      <ApprovalModal
-        isOpen={!!pendingApproval}
-        onClose={() => denyRequest(pendingApproval?.approvalId)}
-        onApprove={() => approveRequest(pendingApproval?.approvalId)}
-        onDeny={() => denyRequest(pendingApproval?.approvalId)}
-        type={pendingApproval?.type || "payment"}
-        amount={approvalAmount}
-        reason={pendingApproval?.reason || ""}
-        isUrgent={true}
-      />
     </div>
   );
 }
