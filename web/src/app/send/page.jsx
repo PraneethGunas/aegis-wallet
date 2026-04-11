@@ -2,37 +2,75 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Fingerprint, ArrowLeft } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Fingerprint, ArrowLeft, Loader2 } from "lucide-react";
 import { motion } from "motion/react";
+import { useWallet } from "@/lib/store";
+import * as bitcoin from "@/lib/bitcoin";
+import * as api from "@/lib/api";
 
 const FEES = {
-  economy: { time: "~30 min", cost: 0.45 },
-  standard: { time: "~10 min", cost: 1.2 },
-  priority: { time: "~5 min", cost: 2.8 },
+  economy: { time: "~30 min", rate: 1 },
+  standard: { time: "~10 min", rate: 5 },
+  priority: { time: "~5 min", rate: 15 },
 };
 
 export default function SendPage() {
+  const router = useRouter();
+  const { balance, btcPrice, fetchBalance, fetchTransactions } = useWallet();
   const [address, setAddress] = useState("");
   const [amountUSD, setAmountUSD] = useState("");
   const [fee, setFee] = useState("standard");
-  const [step, setStep] = useState("form");
+  const [step, setStep] = useState("form"); // "form" | "review" | "sending" | "sent"
+  const [error, setError] = useState(null);
 
   const btcEquivalent = amountUSD
-    ? (parseFloat(amountUSD) / 62850).toFixed(8)
+    ? (parseFloat(amountUSD) / btcPrice).toFixed(8)
     : "0.00000000";
-  const fundingBalance = 2650.4; // TODO: from API
+  const satsAmount = amountUSD
+    ? Math.round((parseFloat(amountUSD) / btcPrice) * 100_000_000)
+    : 0;
+  const feeCostEstimate = FEES[fee].rate * 150 / 100_000_000 * btcPrice; // ~150 vB tx
+  const fundingBalanceUsd = balance.l1Usd;
 
   const handleReview = (e) => {
     e.preventDefault();
+    setError(null);
     setStep("review");
   };
 
-  const handleConfirm = () => {
-    // TODO: Trigger passkey signing → bitcoin.signTransaction()
-    // Then call api.wallet.send(signedTxHex)
-    setStep("form");
-    setAddress("");
-    setAmountUSD("");
+  const handleConfirm = async () => {
+    setStep("sending");
+    setError(null);
+    try {
+      // 1. Get UTXOs from backend
+      const { utxos } = await api.wallet.getUtxos();
+
+      // 2. Build and sign the transaction locally
+      const psbtHex = bitcoin.createFundLNTransaction(
+        null, // uses cached funding key
+        address,
+        satsAmount,
+        utxos,
+        FEES[fee].rate
+      );
+      const signedTxHex = bitcoin.signTransaction(psbtHex);
+
+      // 3. Broadcast via backend
+      await api.wallet.send(signedTxHex);
+
+      setStep("sent");
+
+      // Refresh balances
+      fetchBalance();
+      fetchTransactions();
+
+      // Navigate back after brief delay
+      setTimeout(() => router.push("/dashboard"), 2000);
+    } catch (err) {
+      setError(err.message);
+      setStep("review");
+    }
   };
 
   return (
@@ -54,7 +92,38 @@ export default function SendPage() {
           <p className="text-muted-foreground">Send from your Funding Wallet</p>
         </motion.div>
 
-        {step === "form" ? (
+        {error && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-6 p-4 rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-sm"
+          >
+            {error}
+          </motion.div>
+        )}
+
+        {step === "sent" ? (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="p-12 rounded-3xl bg-card border border-success-green/30 text-center space-y-4"
+          >
+            <div className="w-20 h-20 rounded-full bg-success-green/20 flex items-center justify-center mx-auto">
+              <motion.div
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                transition={{ type: "spring", delay: 0.2 }}
+                className="text-success-green text-4xl"
+              >
+                ✓
+              </motion.div>
+            </div>
+            <h2 className="text-2xl">Transaction Sent</h2>
+            <p className="text-muted-foreground">
+              ${parseFloat(amountUSD).toFixed(2)} sent to {address.slice(0, 12)}...
+            </p>
+          </motion.div>
+        ) : step === "form" ? (
           <motion.form
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -67,7 +136,7 @@ export default function SendPage() {
                 Available Balance
               </p>
               <p className="text-2xl" style={{ fontWeight: 600 }}>
-                ${fundingBalance.toFixed(2)}
+                ${fundingBalanceUsd.toLocaleString("en-US", { minimumFractionDigits: 2 })}
               </p>
             </div>
 
@@ -77,7 +146,7 @@ export default function SendPage() {
                 type="text"
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
-                placeholder="bc1q..."
+                placeholder="bc1q... or bc1p..."
                 required
                 className="w-full px-4 py-3 rounded-xl bg-input border border-border focus:border-primary focus:outline-none transition-colors"
               />
@@ -100,7 +169,7 @@ export default function SendPage() {
                 />
               </div>
               <p className="text-sm text-muted-foreground mt-2">
-                &asymp; {btcEquivalent} BTC
+                &asymp; {btcEquivalent} BTC ({satsAmount.toLocaleString()} sats)
               </p>
             </div>
 
@@ -129,7 +198,7 @@ export default function SendPage() {
                     <p className="text-xs text-muted-foreground">
                       {FEES[option].time}
                     </p>
-                    <p className="text-sm mt-2">${FEES[option].cost.toFixed(2)}</p>
+                    <p className="text-sm mt-2">{FEES[option].rate} sat/vB</p>
                   </motion.button>
                 ))}
               </div>
@@ -139,7 +208,7 @@ export default function SendPage() {
               type="submit"
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
-              disabled={!address || !amountUSD}
+              disabled={!address || !amountUSD || parseFloat(amountUSD) > fundingBalanceUsd}
               className="w-full px-6 py-4 rounded-xl bg-primary text-primary-foreground disabled:opacity-50 disabled:cursor-not-allowed text-lg"
             >
               Review Transaction
@@ -168,16 +237,16 @@ export default function SendPage() {
               <div className="border-t border-border pt-4">
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">
-                    Network Fee
+                    Network Fee (~{FEES[fee].rate} sat/vB)
                   </span>
-                  <span>${FEES[fee].cost.toFixed(2)}</span>
+                  <span>${feeCostEstimate.toFixed(2)}</span>
                 </div>
               </div>
               <div className="border-t border-border pt-4">
                 <div className="flex items-center justify-between">
                   <span style={{ fontWeight: 500 }}>Total</span>
                   <span className="text-xl" style={{ fontWeight: 600 }}>
-                    ${(parseFloat(amountUSD) + FEES[fee].cost).toFixed(2)}
+                    ${(parseFloat(amountUSD) + feeCostEstimate).toFixed(2)}
                   </span>
                 </div>
               </div>
@@ -187,20 +256,26 @@ export default function SendPage() {
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={handleConfirm}
-              className="w-full px-6 py-4 rounded-xl bg-primary text-primary-foreground flex items-center justify-center gap-3 text-lg"
+              disabled={step === "sending"}
+              className="w-full px-6 py-4 rounded-xl bg-primary text-primary-foreground flex items-center justify-center gap-3 text-lg disabled:opacity-70"
             >
-              <motion.div
-                animate={{ scale: [1, 1.1, 1] }}
-                transition={{ duration: 1.5, repeat: Infinity }}
-              >
-                <Fingerprint className="w-5 h-5" />
-              </motion.div>
-              Confirm with Passkey
+              {step === "sending" ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <motion.div
+                  animate={{ scale: [1, 1.1, 1] }}
+                  transition={{ duration: 1.5, repeat: Infinity }}
+                >
+                  <Fingerprint className="w-5 h-5" />
+                </motion.div>
+              )}
+              {step === "sending" ? "Signing & Broadcasting..." : "Confirm with Passkey"}
             </motion.button>
 
             <button
               onClick={() => setStep("form")}
-              className="w-full px-6 py-3 rounded-xl border border-border hover:bg-muted transition-colors"
+              disabled={step === "sending"}
+              className="w-full px-6 py-3 rounded-xl border border-border hover:bg-muted transition-colors disabled:opacity-50"
             >
               Back
             </button>
