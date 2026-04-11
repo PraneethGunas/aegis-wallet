@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import {
   Bot, Wallet, Zap, Plus, ArrowRightLeft, Pause, Play,
-  Fingerprint, Loader2, ChevronDown, Copy,
+  Fingerprint, Loader2, ChevronDown, Copy, RefreshCw,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { QRCodeSVG } from "qrcode.react";
@@ -33,6 +33,7 @@ export default function Dashboard() {
   const [lnLoading, setLnLoading] = useState(false);
   const [autoPayLimit, setAutoPayLimit] = useState(0);
   const [savingLimit, setSavingLimit] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
     fetchBalance();
@@ -79,6 +80,18 @@ export default function Dashboard() {
     setLnLoading(false);
   };
 
+  const handleSync = async () => {
+    setSyncing(true);
+    await Promise.all([fetchBalance(), fetchTransactions(), fetchAgentStatus()]);
+    setSyncing(false);
+  };
+
+  // Auto-poll balance every 30s
+  useEffect(() => {
+    const interval = setInterval(fetchBalance, 30000);
+    return () => clearInterval(interval);
+  }, [fetchBalance]);
+
   const handleAutoPayChange = async (e) => {
     const usd = parseFloat(e.target.value);
     setAutoPayLimit(usd);
@@ -116,7 +129,19 @@ export default function Dashboard() {
           transition={{ ...spring, delay: 0.05 }}
           className="mb-10"
         >
-          <p className="text-xs text-muted-foreground mb-1.5">Total balance</p>
+          <div className="flex items-center justify-between mb-1.5">
+            <p className="text-xs text-muted-foreground">Total balance</p>
+            <motion.button
+              whileTap={{ scale: 0.9, rotate: 180 }}
+              transition={spring}
+              onClick={handleSync}
+              disabled={syncing}
+              className="w-7 h-7 rounded-lg glass border border-border/50 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+              title="Sync wallet"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${syncing ? "animate-spin" : ""}`} />
+            </motion.button>
+          </div>
           <p className="font-mono text-5xl tracking-tight mb-1" style={{ fontWeight: 600, letterSpacing: "-0.04em" }}>
             ${balance.totalUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
