@@ -38,6 +38,25 @@ const socket = process.env.LND_GRPC_HOST || "localhost:10009";
 
 const { lnd } = authenticatedLndGrpc({ cert, macaroon, socket });
 
+// ── Per-agent scoped connections ────────────────────────────────────────────
+// Each agent has a litd account macaroon that enforces its budget ceiling.
+// When used for gRPC calls, LND's RPC middleware checks the account balance
+// before routing any payment. No application code can override this.
+const agentConnections = new Map();
+
+function getAgentLnd(macaroonB64) {
+  if (!macaroonB64) return lnd;
+  if (agentConnections.has(macaroonB64)) return agentConnections.get(macaroonB64);
+
+  const { lnd: agentLnd } = authenticatedLndGrpc({
+    cert,
+    macaroon: macaroonB64,
+    socket,
+  });
+  agentConnections.set(macaroonB64, agentLnd);
+  return agentLnd;
+}
+
 // ── Node Info ───────────────────────────────────────────────────────────────
 
 export async function getInfo() {
@@ -55,9 +74,8 @@ export async function getWalletBalance() {
 }
 
 export async function getBalance(agentMacaroon) {
-  // If agent macaroon provided, create a scoped lnd connection
-  // For now, use the admin connection
-  const bal = await getChannelBalance({ lnd });
+  const connection = agentMacaroon ? getAgentLnd(agentMacaroon) : lnd;
+  const bal = await getChannelBalance({ lnd: connection });
   return {
     balance_sats: bal.channel_balance || 0,
   };
@@ -75,7 +93,8 @@ export async function newAddress(type = "TAPROOT_PUBKEY") {
 
 export async function sendPayment(bolt11, agentMacaroon) {
   try {
-    const result = await pay({ lnd, request: bolt11 });
+    const connection = agentMacaroon ? getAgentLnd(agentMacaroon) : lnd;
+    const result = await pay({ lnd: connection, request: bolt11 });
     const { balance_sats } = await getBalance(agentMacaroon);
     return {
       success: true,
@@ -90,14 +109,16 @@ export async function sendPayment(bolt11, agentMacaroon) {
 }
 
 export async function payInvoiceSync(bolt11, agentMacaroon) {
-  return pay({ lnd, request: bolt11 });
+  const connection = agentMacaroon ? getAgentLnd(agentMacaroon) : lnd;
+  return pay({ lnd: connection, request: bolt11 });
 }
 
 // ── Invoices ────────────────────────────────────────────────────────────────
 
 export async function addInvoice(amountSats, memo, agentMacaroon) {
+  const connection = agentMacaroon ? getAgentLnd(agentMacaroon) : lnd;
   const invoice = await createInvoice({
-    lnd,
+    lnd: connection,
     tokens: amountSats,
     description: memo,
   });
@@ -135,7 +156,8 @@ export async function decodeInvoice(bolt11) {
 // ── Payment History ─────────────────────────────────────────────────────────
 
 export async function listPayments(agentMacaroon, limit = 10) {
-  const { payments } = await getPayments({ lnd, limit });
+  const connection = agentMacaroon ? getAgentLnd(agentMacaroon) : lnd;
+  const { payments } = await getPayments({ lnd: connection, limit });
   return (payments || []).map((p) => ({
     amount_sats: p.tokens,
     fee_sats: p.fee,
