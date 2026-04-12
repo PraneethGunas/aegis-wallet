@@ -341,10 +341,10 @@ export default function Dashboard() {
           transition={{ ...spring, delay: 0.1 }}
           className="mb-10"
         >
-          <p className="text-xs text-muted-foreground mb-3">Agent</p>
+          <p className="text-xs text-muted-foreground mb-3">Spending policy</p>
 
           {!agent.isPaired ? (
-            <AgentSetup onPaired={fetchAgentStatus} />
+            <AgentSetup onPaired={fetchAgentStatus} btcPrice={btcPrice} />
           ) : (
             <div className="p-5 rounded-xl glass border border-border/50 space-y-5">
               {/* Header */}
