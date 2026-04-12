@@ -88,7 +88,7 @@ app.post("/ln/open-channel", authMiddleware, async (req, res, next) => {
     // Open channel
     const result = await lnd.openChannel(peer.pubkey, channelAmount);
 
-    const fundingTxid = result.funding_txid_str || result.funding_txid_bytes;
+    const fundingTxid = result.funding_txid_str || result.transaction_id;
 
     // Notify frontend
     emitToUser(req.user.credentialId, "channel_opening", {
@@ -165,11 +165,11 @@ app.get("/ln/status", authMiddleware, async (req, res, next) => {
     ]);
 
     res.json({
-      syncedToChain: info.value?.synced_to_chain ?? false,
-      numPeers: parseInt(info.value?.num_peers || "0"),
+      syncedToChain: info.value?.is_synced_to_chain ?? false,
+      numPeers: info.value?.peers_count ?? 0,
       onchainConfirmedSats: parseInt(walletBal.value?.confirmed_balance || "0"),
       onchainUnconfirmedSats: parseInt(walletBal.value?.unconfirmed_balance || "0"),
-      channelBalanceSats: parseInt(chanBal.value?.balance_sats || "0"),
+      channelBalanceSats: chanBal.value?.balance_sats ?? 0,
       activeChannels: (channels.value?.channels || []).length,
       pendingChannels: (pending.value?.pending_open_channels || []).length,
     });
