@@ -363,11 +363,12 @@ export function WalletProvider({ children }) {
       dispatch({ type: "SET_FUNDING_STEP", funding: { step: "signing", error: null } });
 
       // 1. Fetch data from APIs (before passkey prompt)
-      const [depositRes, userAddress] = await Promise.all([
-        api.ln.getDepositAddress(),
-        Promise.resolve(localStorage.getItem("aegis_funding_address")),
-      ]);
+      const depositRes = await api.ln.getDepositAddress();
       const lndAddress = depositRes.address;
+
+      // Get UTXOs from the primary funding address
+      const userAddress = localStorage.getItem("aegis_funding_address");
+      if (!userAddress) throw new Error("No funding address. Create wallet first.");
       const { utxos } = await api.wallet.getUtxos(userAddress);
 
       if (!utxos || utxos.length === 0) {
