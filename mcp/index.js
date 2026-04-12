@@ -25,6 +25,12 @@ const args = process.argv.slice(2);
 const macIndex = args.indexOf("--macaroon");
 const macaroon = macIndex !== -1 ? args[macIndex + 1] : null;
 
+const apiUrlIndex = args.indexOf("--api-url");
+const apiUrl = apiUrlIndex !== -1 ? args[apiUrlIndex + 1] : null;
+
+const userIdIndex = args.indexOf("--user-id");
+const userId = userIdIndex !== -1 ? args[userIdIndex + 1] : null;
+
 if (!macaroon) {
   process.stderr.write(`
 aegis-wallet — Bitcoin Lightning wallet MCP server
@@ -72,7 +78,7 @@ server.tool("ping", "Health check", {}, async () => ({
   }],
 }));
 
-registerTools(server, getAgentContext, {});
+registerTools(server, getAgentContext, { apiUrl, userId });
 
 const transport = new StdioServerTransport();
 server.connect(transport).catch((err) => {

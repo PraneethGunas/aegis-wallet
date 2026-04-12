@@ -63,7 +63,9 @@ export async function sendPayment(bolt11) {
       balance_remaining_sats: balance_sats,
     };
   } catch (err) {
-    return { success: false, error: err.message };
+    const msg = (err.message || "").toLowerCase();
+    const budgetExceeded = msg.includes("insufficient") || msg.includes("account") || msg.includes("budget");
+    return { success: false, error: err.message, budget_exceeded: budgetExceeded };
   }
 }
 
