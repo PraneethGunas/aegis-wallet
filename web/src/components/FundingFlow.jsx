@@ -1,16 +1,17 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Copy, Check, X, RefreshCw, Fingerprint } from "lucide-react";
+import { Copy, Check, X, RefreshCw, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { QRCodeSVG } from "qrcode.react";
-import { getNextFundingAddress, isKeysLoaded } from "@/lib/bitcoin";
+import { getNextFundingAddress, isKeysLoaded, deriveKeys, getFundingAddress } from "@/lib/bitcoin";
+import { authenticate } from "@/lib/passkey";
 
 export default function FundingFlow({ isOpen, onClose, fundingAddress }) {
   const [copied, setCopied] = useState(false);
   const [displayAddress, setDisplayAddress] = useState(fundingAddress);
+  const [rotating, setRotating] = useState(false);
 
-  // When opened, show the current address from props
   useEffect(() => {
     if (isOpen && fundingAddress) {
       setDisplayAddress(fundingAddress);
@@ -23,16 +24,20 @@ export default function FundingFlow({ isOpen, onClose, fundingAddress }) {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const [needsAuth, setNeedsAuth] = useState(false);
-
-  const handleNewAddress = () => {
+  const handleNewAddress = async () => {
+    setRotating(true);
     try {
+      // If keys aren't in memory, re-auth silently to reload them
+      if (!isKeysLoaded()) {
+        const { entropy } = await authenticate();
+        deriveKeys(entropy);
+      }
       const { address } = getNextFundingAddress();
       setDisplayAddress(address);
-      setNeedsAuth(false);
     } catch {
-      setNeedsAuth(true);
+      // Auth cancelled or failed — no action needed
     }
+    setRotating(false);
   };
 
   return (
@@ -71,17 +76,13 @@ export default function FundingFlow({ isOpen, onClose, fundingAddress }) {
                     <p className="text-[11px] text-muted-foreground font-mono">taproot (bc1p...)</p>
                     <button
                       onClick={handleNewAddress}
-                      className="text-[11px] text-secondary hover:text-secondary/80 flex items-center gap-1 transition-colors"
+                      disabled={rotating}
+                      className="text-[11px] text-secondary hover:text-secondary/80 flex items-center gap-1 transition-colors disabled:opacity-50"
                     >
-                      <RefreshCw className="w-2.5 h-2.5" />
+                      {rotating ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <RefreshCw className="w-2.5 h-2.5" />}
                       new address
                     </button>
                   </div>
-                  {needsAuth && (
-                    <p className="text-[11px] text-amber-500 mt-1">
-                      Re-authenticate to generate a new address
-                    </p>
-                  )}
                 </>
               ) : (
                 <p className="text-sm text-muted-foreground py-4">Authenticate to view address</p>
