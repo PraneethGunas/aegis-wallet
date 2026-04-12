@@ -26,6 +26,7 @@ const initialState = {
   // Balances
   balance: {
     l1Sats: 0,
+    l1Unconfirmed: 0,
     l2Sats: 0,
     l1Usd: 0,
     l2Usd: 0,
@@ -212,6 +213,7 @@ export function WalletProvider({ children }) {
         type: "SET_BALANCE",
         balance: {
           l1Sats: data.l1Sats ?? 0,
+          l1Unconfirmed: data.l1Unconfirmed ?? 0,
           l2Sats: data.l2Sats ?? 0,
           l1Usd: data.l1Usd ?? 0,
           l2Usd: data.l2Usd ?? 0,

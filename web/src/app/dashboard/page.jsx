@@ -145,9 +145,16 @@ export default function Dashboard() {
           <p className="font-mono text-5xl tracking-tight mb-1" style={{ fontWeight: 600, letterSpacing: "-0.04em" }}>
             ${balance.totalUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
-          <p className="font-mono text-sm text-muted-foreground">
-            {(balance.l1Sats + balance.l2Sats).toLocaleString()} sats
-          </p>
+          <div className="flex items-center gap-2">
+            <p className="font-mono text-sm text-muted-foreground">
+              {(balance.l1Sats + balance.l2Sats).toLocaleString()} sats
+            </p>
+            {balance.l1Unconfirmed > 0 && (
+              <span className="pill bg-amber-500/15 text-amber-500 animate-pulse">
+                +{balance.l1Unconfirmed.toLocaleString()} pending
+              </span>
+            )}
+          </div>
 
           {/* L1 / L2 bar */}
           <div className="flex gap-3 mt-6">
@@ -167,7 +174,14 @@ export default function Dashboard() {
               <p className="font-mono text-lg" style={{ fontWeight: 500 }}>
                 ${balance.l1Usd.toFixed(2)}
               </p>
-              <p className="font-mono text-xs text-muted-foreground">{balance.l1Sats.toLocaleString()} sats</p>
+              <div className="flex items-center gap-1.5">
+                <p className="font-mono text-xs text-muted-foreground">{balance.l1Sats.toLocaleString()} sats</p>
+                {balance.l1Unconfirmed > 0 && (
+                  <span className="font-mono text-xs text-amber-500 animate-pulse">
+                    +{balance.l1Unconfirmed.toLocaleString()}
+                  </span>
+                )}
+              </div>
             </motion.button>
 
             <motion.button
@@ -428,7 +442,7 @@ export default function Dashboard() {
               </p>
             </div>
           ) : (
-            <TxList transactions={transactions} />
+            <TxList transactions={transactions} btcPrice={btcPrice} />
           )}
         </motion.div>
       </div>
