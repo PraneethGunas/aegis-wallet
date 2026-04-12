@@ -171,4 +171,14 @@ export const ln = {
     }),
 
   getDepositAddress: () => request("/ln/deposit-address"),
+
+  openChannel: (amountSats) =>
+    request("/ln/open-channel", {
+      method: "POST",
+      body: JSON.stringify({ amountSats }),
+    }),
+
+  getChannels: () => request("/ln/channels"),
+
+  getNodeStatus: () => request("/ln/status"),
 };

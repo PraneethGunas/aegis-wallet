@@ -110,7 +110,7 @@ export function isConnected() {
 }
 
 function dispatch(message) {
-  const { type, data } = message;
+  const { event: type, data } = message;
   const handlers = listeners.get(type);
   if (handlers) {
     handlers.forEach((cb) => {

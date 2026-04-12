@@ -9,6 +9,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { QRCodeSVG } from "qrcode.react";
 import TxList from "@/components/TxList";
 import FundingFlow from "@/components/FundingFlow";
+import FundAgentFlow from "@/components/FundAgentFlow";
 import AgentSetup from "@/components/AgentSetup";
 import ApprovalBanner from "@/components/ApprovalBanner";
 import { useWallet } from "@/lib/store";
@@ -207,9 +208,17 @@ export default function Dashboard() {
           {/* Inline funding */}
           <FundingFlow isOpen={showFunding} onClose={() => setShowFunding(false)} fundingAddress={fundingAddress} />
 
-          {/* Inline fund agent — two methods */}
+          {/* Fund Agent — full pipeline: L1→on-chain→channel→ready */}
+          <FundAgentFlow
+            isOpen={showFundAgent}
+            onClose={() => setShowFundAgent(false)}
+            balance={balance}
+            btcPrice={btcPrice}
+          />
+
+          {/* REMOVED old inline fund agent — replaced by FundAgentFlow */}
           <AnimatePresence>
-            {showFundAgent && (
+            {false && (
               <motion.div
                 initial={{ height: 0, opacity: 0 }}
                 animate={{ height: "auto", opacity: 1 }}

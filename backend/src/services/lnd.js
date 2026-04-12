@@ -217,3 +217,50 @@ export async function getInfo() {
 export async function getTransactions() {
   return lndRequest("/v1/transactions");
 }
+
+// ── Channel operations ──────────────────────────────────────────────────────
+
+// Well-connected mainnet peer for auto channel opening
+export const DEFAULT_CHANNEL_PEER = {
+  pubkey: "03864ef025fde8fb587d989186ce6a4a186895ee44a926bfc370e2c366597a3f8f",
+  host: "3.33.236.230:9735",
+  name: "ACINQ",
+};
+
+export async function connectPeer(pubkey, host) {
+  try {
+    return await lndRequest("/v1/peers", {
+      method: "POST",
+      body: { addr: { pubkey, host }, perm: true },
+    });
+  } catch (err) {
+    // "already connected" is fine
+    if (err.message?.includes("already connected")) return { ok: true };
+    throw err;
+  }
+}
+
+export async function listPeers() {
+  return lndRequest("/v1/peers");
+}
+
+export async function openChannel(peerPubkey, localAmountSats) {
+  return lndRequest("/v1/channels", {
+    method: "POST",
+    body: {
+      node_pubkey_string: peerPubkey,
+      local_funding_amount: String(localAmountSats),
+      push_sat: "0",
+      private: false,
+      min_confs: 1,
+    },
+  });
+}
+
+export async function listChannels() {
+  return lndRequest("/v1/channels");
+}
+
+export async function pendingChannels() {
+  return lndRequest("/v1/channels/pending");
+}

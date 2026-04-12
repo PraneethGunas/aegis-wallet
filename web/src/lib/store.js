@@ -50,6 +50,13 @@ const initialState = {
   // Transactions
   transactions: [],
 
+  // L1→L2 funding pipeline
+  funding: {
+    step: "idle", // idle | signing | broadcasting | confirming | opening_channel | ready | error
+    txid: null,
+    error: null,
+  },
+
   // Pending approval (from WebSocket)
   pendingApproval: null,
 
@@ -85,6 +92,12 @@ function reducer(state, action) {
 
     case "SET_TRANSACTIONS":
       return { ...state, transactions: action.transactions };
+
+    case "SET_FUNDING_STEP":
+      return { ...state, funding: { ...state.funding, ...action.funding } };
+
+    case "RESET_FUNDING":
+      return { ...state, funding: { step: "idle", txid: null, error: null } };
 
     case "SET_PENDING_APPROVAL":
       return { ...state, pendingApproval: action.approval };
@@ -334,6 +347,60 @@ export function WalletProvider({ children }) {
     }
   }, []);
 
+  // --- L1→L2 Funding Pipeline ---
+
+  const fundAgent = useCallback(async (amountSats) => {
+    try {
+      dispatch({ type: "SET_FUNDING_STEP", funding: { step: "signing", error: null } });
+
+      const btcMod = await import("@/lib/bitcoin");
+      if (!btcMod.isKeysLoaded()) {
+        const { entropy } = await passkey.authenticate();
+        btcMod.deriveKeys(entropy);
+      }
+
+      // Get LND deposit address and user's UTXOs
+      const { address: lndAddress } = await api.ln.getDepositAddress();
+      const userAddress = localStorage.getItem("aegis_funding_address");
+      const { utxos } = await api.wallet.getUtxos(userAddress);
+
+      // Build and sign PSBT
+      const psbtHex = btcMod.createFundLNTransaction(null, lndAddress, amountSats, utxos, 5);
+      const signedTxHex = btcMod.signTransaction(psbtHex);
+
+      dispatch({ type: "SET_FUNDING_STEP", funding: { step: "broadcasting" } });
+      await api.ln.fund(signedTxHex);
+
+      dispatch({ type: "SET_FUNDING_STEP", funding: { step: "confirming" } });
+
+      // Poll mempool for confirmation, then open channel
+      const pollConfirmation = setInterval(async () => {
+        try {
+          const status = await api.ln.getNodeStatus();
+          if (status.onchainConfirmedSats > 0) {
+            clearInterval(pollConfirmation);
+            dispatch({ type: "SET_FUNDING_STEP", funding: { step: "opening_channel" } });
+            try {
+              await api.ln.openChannel(amountSats);
+              // channel_confirmed will come via WebSocket
+            } catch (err) {
+              dispatch({ type: "SET_FUNDING_STEP", funding: { step: "error", error: err.message } });
+            }
+          }
+        } catch {}
+      }, 15000);
+
+      // Cap polling
+      setTimeout(() => clearInterval(pollConfirmation), 30 * 60 * 1000);
+    } catch (err) {
+      dispatch({ type: "SET_FUNDING_STEP", funding: { step: "error", error: err.message } });
+    }
+  }, []);
+
+  const resetFunding = useCallback(() => {
+    dispatch({ type: "RESET_FUNDING" });
+  }, []);
+
   // --- WebSocket Event Handlers ---
 
   useEffect(() => {
@@ -382,6 +449,15 @@ export function WalletProvider({ children }) {
 
       ws.on("agent_paused", () => {
         dispatch({ type: "SET_AGENT", agent: { isActive: false } });
+      }),
+
+      ws.on("channel_opening", () => {
+        dispatch({ type: "SET_FUNDING_STEP", funding: { step: "opening_channel" } });
+      }),
+
+      ws.on("channel_confirmed", () => {
+        dispatch({ type: "SET_FUNDING_STEP", funding: { step: "ready" } });
+        fetchBalance();
       }),
     ];
 
@@ -448,6 +524,8 @@ export function WalletProvider({ children }) {
     denyRequest,
     pauseAgent,
     resumeAgent,
+    fundAgent,
+    resetFunding,
   };
 
   return (
