@@ -362,21 +362,35 @@ export function WalletProvider({ children }) {
     try {
       dispatch({ type: "SET_FUNDING_STEP", funding: { step: "signing", error: null } });
 
+      // 1. Fetch data from APIs (before passkey prompt)
+      const [depositRes, userAddress] = await Promise.all([
+        api.ln.getDepositAddress(),
+        Promise.resolve(localStorage.getItem("aegis_funding_address")),
+      ]);
+      const lndAddress = depositRes.address;
+      const { utxos } = await api.wallet.getUtxos(userAddress);
+
+      if (!utxos || utxos.length === 0) {
+        throw new Error("No funds available in savings wallet");
+      }
+
+      const totalAvailable = utxos.reduce((sum, u) => sum + u.value, 0);
+      if (totalAvailable < amountSats + 1000) {
+        throw new Error(`Insufficient funds: have ${totalAvailable.toLocaleString()} sats, need ~${(amountSats + 1000).toLocaleString()} sats (including fees)`);
+      }
+
+      // 2. Load keys — triggers passkey biometric
       const btcMod = await import("@/lib/bitcoin");
       if (!btcMod.isKeysLoaded()) {
         const { entropy } = await passkey.authenticate();
         btcMod.deriveKeys(entropy);
       }
 
-      // Get LND deposit address and user's UTXOs
-      const { address: lndAddress } = await api.ln.getDepositAddress();
-      const userAddress = localStorage.getItem("aegis_funding_address");
-      const { utxos } = await api.wallet.getUtxos(userAddress);
-
-      // Build and sign PSBT
+      // 3. Build and sign PSBT
       const psbtHex = btcMod.createFundLNTransaction(null, lndAddress, amountSats, utxos, 5);
       const signedTxHex = btcMod.signTransaction(psbtHex);
 
+      // 4. Broadcast
       dispatch({ type: "SET_FUNDING_STEP", funding: { step: "broadcasting" } });
       await api.ln.fund(signedTxHex);
 
