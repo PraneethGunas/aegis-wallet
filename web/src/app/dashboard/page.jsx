@@ -32,8 +32,6 @@ export default function Dashboard() {
   const [lnAmount, setLnAmount] = useState("");
   const [lnInvoice, setLnInvoice] = useState(null);
   const [lnLoading, setLnLoading] = useState(false);
-  const [autoPayLimit, setAutoPayLimit] = useState(0);
-  const [savingLimit, setSavingLimit] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
@@ -41,10 +39,6 @@ export default function Dashboard() {
     fetchTransactions();
     fetchAgentStatus();
   }, [fetchBalance, fetchTransactions, fetchAgentStatus]);
-
-  useEffect(() => {
-    setAutoPayLimit(((agent.autoPayLimitSats || 250) / 1e8) * btcPrice);
-  }, [agent.autoPayLimitSats, btcPrice]);
 
   const spentUsd = ((agent.spentSats || 0) / 1e8) * btcPrice;
   const budgetUsd = ((agent.budgetSats || 0) / 1e8) * btcPrice;
@@ -93,15 +87,6 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, [fetchBalance]);
 
-  const handleAutoPayChange = async (e) => {
-    const usd = parseFloat(e.target.value);
-    setAutoPayLimit(usd);
-    setSavingLimit(true);
-    try {
-      await api.agent.updateAutoPayLimit(Math.round((usd / btcPrice) * 1e8));
-    } catch {}
-    setTimeout(() => setSavingLimit(false), 500);
-  };
 
   return (
     <div className="min-h-screen pb-28 md:pb-8">
@@ -406,31 +391,7 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Auto-pay slider */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-muted-foreground">Auto-approve up to</span>
-                  <span className="font-mono text-xs">
-                    ${autoPayLimit.toFixed(2)}
-                    {savingLimit && <span className="text-muted-foreground ml-1 text-[10px]">saving</span>}
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  min="0.50"
-                  max="50"
-                  step="0.50"
-                  value={autoPayLimit}
-                  onChange={handleAutoPayChange}
-                  className="w-full"
-                />
-                <div className="flex justify-between font-mono text-[10px] text-muted-foreground mt-1">
-                  <span>$0.50</span>
-                  <span>$50</span>
-                </div>
-              </div>
-
-              {/* Budget adjustment */}
+              {/* Adjust spending limit */}
               <div className="flex gap-2">
                 {[5, 10, 20].map((usd) => {
                   const sats = Math.round((usd / btcPrice) * 1e8);

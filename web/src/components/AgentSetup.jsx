@@ -9,20 +9,18 @@ const spring = { type: "spring", stiffness: 300, damping: 24 };
 
 export default function AgentSetup({ onPaired, btcPrice = 100000, credentialId = "default" }) {
   const [budgetUsd, setBudgetUsd] = useState("10");
-  const [thresholdUsd, setThresholdUsd] = useState("2.50");
   const [creating, setCreating] = useState(false);
   const [credential, setCredential] = useState(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState(null);
 
   const budgetSats = Math.round((parseFloat(budgetUsd || 0) / btcPrice) * 1e8);
-  const thresholdSats = Math.round((parseFloat(thresholdUsd || 0) / btcPrice) * 1e8);
 
   const handleGenerate = async () => {
     setCreating(true);
     setError(null);
     try {
-      const result = await api.agent.create(budgetSats, thresholdSats);
+      const result = await api.agent.create(budgetSats);
       setCredential(result);
       onPaired?.();
     } catch (err) {
@@ -31,85 +29,43 @@ export default function AgentSetup({ onPaired, btcPrice = 100000, credentialId =
     setCreating(false);
   };
 
-  const MCP_SERVER_PATH = "aegis-wallet"; // npm package — installed via npx
-
   const generatePrompt = () => `You are my financial agent with access to a real Bitcoin Lightning wallet.
 
-YOUR WALLET CONNECTION:
-You are connected to a local LND Lightning node via the aegis-wallet MCP server.
-The MCP server runs via: npx aegis-wallet
-It connects to LND via gRPC (localhost:10009) using a scoped macaroon.
-Your spending is enforced cryptographically by LND — you cannot exceed your budget.
+YOUR WALLET:
+You are connected to an LND Lightning node via the aegis-wallet MCP server.
+Your spending limit is ${budgetSats.toLocaleString()} sats ($${budgetUsd}).
+This limit is enforced cryptographically by LND — you cannot exceed it.
 
-TOOLS — aegis-wallet MCP:
-- get_balance() — check your spending budget (currently ${budgetSats.toLocaleString()} sats / $${budgetUsd})
+TOOLS:
+- get_balance() — check how much you can spend
 - pay_invoice(bolt11, purpose) — pay a Lightning invoice. Returns preimage on success.
-- get_budget_status() — today's spending, remaining budget, recent payments
-- request_approval(amount_sats, reason) — request user approval for payments over $${thresholdUsd}
-- request_topup(amount_sats, reason) — request more budget from the user
-- list_payments(limit) — view your payment history
-- create_invoice(amount_sats, memo) — generate a Lightning invoice to receive payment
-
-TOOLS — 402index MCP:
-- search_services(query, protocol, category, health_status, limit) — search 17,000+ paid API endpoints
-- get_service_detail(id) — full details on a specific service
-- list_categories() — browse all API categories
-- get_directory_stats() — overall directory stats
+- decode_invoice(bolt11) — decode a BOLT11 to see amount, description, expiry
+- list_payments(limit) — view payment history
+- create_invoice(amount_sats, memo) — generate an invoice to receive payment
 
 SPENDING RULES:
-- Payments under $${thresholdUsd}: auto-approve — just pay, no need to ask me
-- Payments over $${thresholdUsd}: call request_approval() first — I'll get a biometric prompt on my device
-- Total budget: $${budgetUsd} (${budgetSats.toLocaleString()} sats) — hard ceiling, LND rejects anything over this
-- Always tell me what you paid for, how much, and the remaining balance
+- You can pay any invoice within your budget. No need to ask permission.
+- If a payment is rejected with "insufficient balance", you've hit your limit. Tell me.
+- Always tell me what you paid for, how much, and your remaining balance.
 
-HOW TO HANDLE L402 PAYMENTS:
-L402 is the Lightning payment protocol for APIs. When you access a paid API:
-1. Make the HTTP request normally
-2. If you get HTTP 402 Payment Required, the response contains:
-   - WWW-Authenticate header with: macaroon (base64) + invoice (BOLT11 starting with lnbc)
-   - Or a JSON body with invoice/macaroon fields
-3. Call get_balance() to verify you can afford it
-4. If under $${thresholdUsd}: call pay_invoice(bolt11, "what this pays for")
-   If over $${thresholdUsd}: call request_approval(amount_sats, "reason") first, then pay_invoice with the approval_id
-5. You get back a preimage (hex string) — this is your proof of payment
-6. Retry the original request with header: Authorization: L402 <macaroon>:<preimage>
-7. The API now returns the content
+L402 PAYMENTS:
+When you hit an HTTP 402 response:
+1. Extract the BOLT11 invoice from the response
+2. Call get_balance() to check if you can afford it
+3. Call pay_invoice(bolt11, "what this pays for")
+4. Use the returned preimage to retry: Authorization: L402 <macaroon>:<preimage>
 
-HOW TO DISCOVER PAID SERVICES:
-Use the 402index MCP to find things to buy:
-- search_services({category: "ai", protocol: "L402"}) — find AI services accepting Lightning
-- search_services({category: "data"}) — find data APIs
-- search_services({category: "bitcoin"}) — find Bitcoin-related services
-- Categories include: ai, data, bitcoin, media, nostr, search, tools, compute, gaming, storage
+DISCOVERING PAID SERVICES:
+Use the 402index MCP tools to search 17,000+ paid API endpoints:
+- search_services(category, protocol, health_status) — find L402/x402 APIs
+- list_categories() — browse categories
 
-CRITICAL RULES:
-- You MUST use ONLY the aegis-wallet MCP tools for ALL payment operations. NEVER use shell commands, docker exec, lncli, curl, or any direct access to LND. The MCP tools are your ONLY interface to the wallet.
+CRITICAL:
+- Use ONLY the MCP tools for payments. Never use shell commands or direct LND access.
 - This is real Bitcoin on mainnet. Every payment uses real money.
-- The macaroon enforces your budget at the LND protocol layer — you literally cannot overspend through the MCP tools.
-- If a payment fails, check the error: "insufficient balance" means budget exceeded, "routing failed" means try again.
-- Always call get_balance() before attempting a payment to verify you have sufficient funds.
-- Always report what you spent and your remaining balance after each payment.
-- NEVER attempt to bypass spending limits by using alternative payment methods. The MCP tools are the only authorized way to spend.
+- Always report what you spent and your remaining balance.
 
-You're connected and ready. What would you like me to help you with?`;
-
-  const handleCopyConfig = () => {
-    const config = JSON.stringify({
-      mcpServers: {
-        "aegis-wallet": {
-          command: "npx",
-          args: ["-y", MCP_SERVER_PATH, "--macaroon", credential.macaroon],
-        },
-        "402index": {
-          command: "mcp-server",
-        },
-      },
-    }, null, 2);
-    navigator.clipboard.writeText(config);
-    setCopied("config");
-    setTimeout(() => setCopied(null), 2000);
-  };
-
+Ready. What would you like me to help you with?`;
 
   // ── After credential generated ──────────────────────────────────
   if (credential) {
@@ -125,7 +81,7 @@ You're connected and ready. What would you like me to help you with?`;
             ${parseFloat(budgetUsd).toFixed(2)}
           </p>
           <p className="text-xs text-muted-foreground mt-1">
-            {budgetSats.toLocaleString()} sats · auto-approve under ${thresholdUsd}
+            {budgetSats.toLocaleString()} sats
           </p>
         </div>
 
@@ -134,13 +90,13 @@ You're connected and ready. What would you like me to help you with?`;
           transition={spring}
           onClick={() => {
             const bundle = `=== CLAUDE DESKTOP CONFIG ===
-Paste this into Claude Desktop → Settings → Developer → Edit Config:
+Paste into Claude Desktop → Settings → Developer → Edit Config:
 
 ${JSON.stringify({
   mcpServers: {
     "aegis-wallet": {
       command: "npx",
-      args: ["-y", MCP_SERVER_PATH, "--macaroon", credential.macaroon, "--user", credentialId, "--threshold", String(thresholdSats)],
+      args: ["-y", "aegis-wallet", "--macaroon", credential.macaroon],
     },
     "402index": {
       command: "mcp-server",
@@ -149,7 +105,7 @@ ${JSON.stringify({
 }, null, 2)}
 
 === AGENT INSTRUCTIONS ===
-Paste this as your first message to Claude after config is set:
+Paste as your first message to Claude:
 
 ${generatePrompt()}`;
             navigator.clipboard.writeText(bundle);
@@ -176,55 +132,35 @@ ${generatePrompt()}`;
     );
   }
 
-  // ── Set limits ──────────────────────────────────────────────────
+  // ── Set spending limit ──────────────────────────────────────────
   return (
     <div className="p-5 rounded-xl glass border border-border/50 space-y-4">
       <div className="flex items-center gap-2">
         <Shield className="w-4 h-4 text-secondary" />
-        <p className="text-sm font-medium">Spending policy</p>
+        <p className="text-sm font-medium">Spending limit</p>
       </div>
       <p className="text-xs text-muted-foreground">
-        Set limits for AI agents. Enforced cryptographically by Lightning.
+        How much can the agent spend? Enforced cryptographically by Lightning.
       </p>
 
-      {/* Budget */}
+      {/* Budget slider + input */}
       <div>
-        <div className="flex items-center justify-between mb-1.5">
-          <span className="text-xs text-muted-foreground">Total budget</span>
-          <span className="font-mono text-xs">{budgetSats.toLocaleString()} sats</span>
-        </div>
-        <div className="relative">
-          <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground font-mono text-sm">$</span>
-          <input
-            type="number"
-            value={budgetUsd}
-            onChange={(e) => setBudgetUsd(e.target.value)}
-            placeholder="10.00"
-            step="0.50"
-            min="0.50"
-            className="w-full pl-7 pr-4 py-2.5 rounded-lg bg-input border border-border/50 focus:border-secondary/50 focus:outline-none font-mono text-sm"
-          />
-        </div>
-      </div>
-
-      {/* Auto-pay threshold */}
-      <div>
-        <div className="flex items-center justify-between mb-1.5">
-          <span className="text-xs text-muted-foreground">Auto-approve up to</span>
-          <span className="font-mono text-xs">${parseFloat(thresholdUsd || 0).toFixed(2)}</span>
+        <div className="flex items-center justify-between mb-2">
+          <span className="font-mono text-2xl" style={{ fontWeight: 600 }}>${parseFloat(budgetUsd || 0).toFixed(2)}</span>
+          <span className="font-mono text-xs text-muted-foreground">{budgetSats.toLocaleString()} sats</span>
         </div>
         <input
           type="range"
-          min="0.50"
-          max={budgetUsd || "10"}
-          step="0.50"
-          value={thresholdUsd}
-          onChange={(e) => setThresholdUsd(e.target.value)}
+          min="1"
+          max="50"
+          step="1"
+          value={budgetUsd}
+          onChange={(e) => setBudgetUsd(e.target.value)}
           className="w-full"
         />
         <div className="flex justify-between font-mono text-[10px] text-muted-foreground mt-1">
-          <span>$0.50</span>
-          <span>${parseFloat(budgetUsd || 10).toFixed(0)}</span>
+          <span>$1</span>
+          <span>$50</span>
         </div>
       </div>
 
