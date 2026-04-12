@@ -10,14 +10,28 @@
  * No custody involved — mempool.space is a read-only block explorer API.
  */
 
-const MEMPOOL_API = process.env.MEMPOOL_API || "https://mempool.space/api";
+const APIS = [
+  process.env.MEMPOOL_API || "https://mempool.space/api",
+  "https://blockstream.info/api",
+];
 
 async function mempoolRequest(path) {
-  const res = await fetch(`${MEMPOOL_API}${path}`);
-  if (!res.ok) {
-    throw new Error(`Mempool API error: ${res.status} ${res.statusText}`);
+  let lastErr;
+  for (const api of APIS) {
+    try {
+      const res = await fetch(`${api}${path}`, {
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) {
+        lastErr = new Error(`${api}: ${res.status} ${res.statusText}`);
+        continue;
+      }
+      return await res.json();
+    } catch (err) {
+      lastErr = err;
+    }
   }
-  return res.json();
+  throw lastErr || new Error("All block explorer APIs failed");
 }
 
 /**
