@@ -41,7 +41,17 @@ async function blockchainInfoRequest(path) {
  * Get address balance (confirmed + unconfirmed).
  */
 export async function getAddressBalance(address) {
-  // Try Esplora first
+  // Try blockchain.info first (most reliable on restricted networks)
+  try {
+    const bcData = await blockchainInfoRequest(`/rawaddr/${address}`);
+    return {
+      confirmed_sats: bcData.final_balance,
+      unconfirmed_sats: 0,
+      total_sats: bcData.final_balance,
+    };
+  } catch {}
+
+  // Fallback: Esplora APIs
   const data = await esploraRequest(`/address/${address}`);
   if (data) {
     return {
@@ -65,7 +75,19 @@ export async function getAddressBalance(address) {
  * Get UTXOs for an address (for PSBT construction).
  */
 export async function getAddressUtxos(address) {
-  // Try Esplora first
+  // Try blockchain.info first
+  try {
+    const bcData = await blockchainInfoRequest(`/unspent?active=${address}&confirmations=0`);
+    return (bcData.unspent_outputs || []).map((u) => ({
+      txid: u.tx_hash_big_endian,
+      vout: u.tx_output_n,
+      value: u.value,
+      confirmed: u.confirmations > 0,
+      block_height: null,
+    }));
+  } catch {}
+
+  // Fallback: Esplora
   const data = await esploraRequest(`/address/${address}/utxo`);
   if (data) {
     return data.map((u) => ({
@@ -77,7 +99,7 @@ export async function getAddressUtxos(address) {
     }));
   }
 
-  // Fallback: blockchain.info — extract unspent from full address data
+  // Last resort
   const bcData = await blockchainInfoRequest(`/unspent?active=${address}&confirmations=0`);
   return (bcData.unspent_outputs || []).map((u) => ({
     txid: u.tx_hash_big_endian,
@@ -92,7 +114,20 @@ export async function getAddressUtxos(address) {
  * Get transaction history for an address.
  */
 export async function getAddressTransactions(address) {
-  // Try Esplora first
+  // Try blockchain.info first
+  try {
+    const bcData = await blockchainInfoRequest(`/rawaddr/${address}`);
+    return (bcData.txs || []).map((tx) => ({
+      txid: tx.hash,
+      amount_sats: Math.abs(tx.result),
+      direction: tx.result >= 0 ? "receive" : "send",
+      confirmed: tx.block_height > 0,
+      timestamp: new Date(tx.time * 1000).toISOString(),
+      fee: tx.fee,
+    }));
+  } catch {}
+
+  // Fallback: Esplora
   const data = await esploraRequest(`/address/${address}/txs`);
   if (data) {
     return data.map((tx) => {
