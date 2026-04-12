@@ -31,13 +31,13 @@ export default function AgentSetup({ onPaired, btcPrice = 100000, credentialId =
     setCreating(false);
   };
 
-  const MCP_SERVER_PATH = "/Users/praneeth/Documents/Claude/Projects/Bitcoin MIT Hackathon/backend/src/mcp/server.js";
+  const MCP_SERVER_PATH = "aegis-wallet"; // npm package — installed via npx
 
   const generatePrompt = () => `You are my financial agent with access to a real Bitcoin Lightning wallet.
 
 YOUR WALLET CONNECTION:
 You are connected to a local LND Lightning node via the aegis-wallet MCP server.
-The MCP server runs locally at: ${MCP_SERVER_PATH}
+The MCP server runs via: npx aegis-wallet
 It connects to LND via gRPC (localhost:10009) using a scoped macaroon.
 Your spending is enforced cryptographically by LND — you cannot exceed your budget.
 
@@ -97,8 +97,8 @@ You're connected and ready. What would you like me to help you with?`;
     const config = JSON.stringify({
       mcpServers: {
         "aegis-wallet": {
-          command: "node",
-          args: [MCP_SERVER_PATH, "--macaroon", credential.macaroon, "--user", credentialId],
+          command: "npx",
+          args: ["-y", MCP_SERVER_PATH, "--macaroon", credential.macaroon, "--user", credentialId],
         },
         "402index": {
           command: "mcp-server",

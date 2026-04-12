@@ -1,0 +1,44 @@
+{
+  "name": "aegis-wallet",
+  "version": "0.1.0",
+  "description": "Bitcoin Lightning wallet MCP server — cryptographic budget enforcement via macaroons",
+  "type": "module",
+  "bin": {
+    "aegis-wallet": "index.js"
+  },
+  "files": [
+    "index.js",
+    "tools.js",
+    "auth.js",
+    "lnd.js",
+    "db.js",
+    "schema.sql",
+    "README.md"
+  ],
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "bitcoin",
+    "lightning",
+    "lnd",
+    "wallet",
+    "macaroon",
+    "l402",
+    "agent",
+    "payments"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PraneethGunas/aegis-wallet"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "better-sqlite3": "^11.9.1",
+    "ln-service": "^58.0.3",
+    "zod": "^3.24.4"
+  }
+}
