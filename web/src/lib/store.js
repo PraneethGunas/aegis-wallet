@@ -26,6 +26,7 @@ const initialState = {
   // Balances
   balance: {
     l1Sats: 0,
+    l1Unconfirmed: 0,
     l2Sats: 0,
     l1Usd: 0,
     l2Usd: 0,
@@ -34,7 +35,7 @@ const initialState = {
   },
 
   // BTC price
-  btcPrice: 62850, // fallback
+  btcPrice: 0, // fetched from CoinGecko on mount
 
   // Agent
   agent: {
@@ -196,13 +197,19 @@ export function WalletProvider({ children }) {
   const fetchBalance = useCallback(async () => {
     dispatch({ type: "SET_LOADING", key: "balance", value: true });
     try {
-      // Pass user's self-custodial address so backend queries mempool.space for L1
-      const address = localStorage.getItem("aegis_funding_address");
-      const data = await api.wallet.getBalance(address);
+      // Pass ALL derived addresses so backend aggregates balance across all indices
+      let addresses;
+      try {
+        addresses = bitcoin.getAllFundingAddresses().join(",");
+      } catch {
+        addresses = localStorage.getItem("aegis_funding_address") || "";
+      }
+      const data = await api.wallet.getBalance(addresses);
       dispatch({
         type: "SET_BALANCE",
         balance: {
           l1Sats: data.l1Sats ?? 0,
+          l1Unconfirmed: data.l1Unconfirmed ?? 0,
           l2Sats: data.l2Sats ?? 0,
           l1Usd: data.l1Usd ?? 0,
           l2Usd: data.l2Usd ?? 0,
@@ -225,8 +232,13 @@ export function WalletProvider({ children }) {
   const fetchTransactions = useCallback(async () => {
     dispatch({ type: "SET_LOADING", key: "transactions", value: true });
     try {
-      const address = localStorage.getItem("aegis_funding_address");
-      const data = await api.wallet.getHistory(20, address);
+      let addresses;
+      try {
+        addresses = bitcoin.getAllFundingAddresses().join(",");
+      } catch {
+        addresses = localStorage.getItem("aegis_funding_address") || "";
+      }
+      const data = await api.wallet.getHistory(20, addresses);
       dispatch({
         type: "SET_TRANSACTIONS",
         transactions: data.transactions ?? [],
@@ -376,18 +388,44 @@ export function WalletProvider({ children }) {
     return () => unsubs.forEach((unsub) => unsub());
   }, [fetchBalance, fetchTransactions, fetchAgentStatus]);
 
-  // Restore session on mount — credential in passkey storage, address in localStorage
+  // Restore session on mount — re-auth via passkey to reload keys into memory
   useEffect(() => {
     const credentialId = passkey.getCredentialId();
     const token = api.getAuthToken();
-    const fundingAddress = localStorage.getItem("aegis_funding_address");
     if (credentialId && token) {
+      // Show cached address immediately while re-auth happens
+      const cachedAddress = localStorage.getItem("aegis_funding_address");
       dispatch({
         type: "SET_AUTHENTICATED",
         credentialId,
-        fundingAddress,
+        fundingAddress: cachedAddress,
       });
-      ws.connect();
+
+      // Silently re-authenticate to reload keys into memory
+      // This triggers a biometric prompt — keys are needed for address derivation
+      (async () => {
+        try {
+          const { entropy } = await passkey.authenticate();
+          const { fundingKey } = bitcoin.deriveKeys(entropy);
+          const fundingAddress = bitcoin.getFundingAddress(fundingKey);
+          localStorage.setItem("aegis_funding_address", fundingAddress);
+          dispatch({
+            type: "SET_AUTHENTICATED",
+            credentialId,
+            fundingAddress,
+          });
+          ws.connect();
+          fetchBalance();
+          fetchTransactions();
+          fetchAgentStatus();
+        } catch {
+          // Auth failed/cancelled — still show cached data, just can't derive new addresses
+          ws.connect();
+          fetchBalance();
+          fetchTransactions();
+          fetchAgentStatus();
+        }
+      })();
     }
   }, []);
 
