@@ -32,54 +32,30 @@ function getUserAgent(credentialId) {
   return agents[0] || null;
 }
 
-// ── Create Agent ────────────────────────────────────────────────────────────
+// ── Create Agent — generates litd account with scoped macaroon ──────────────
 router.post("/create", auth, async (req, res, next) => {
   try {
     const { budgetSats = 50000, autoPayLimitSats = 15000 } = req.body;
-    const authToken = `aegis_agent_${crypto.randomBytes(24).toString("hex")}`;
 
-    // Create litd account with budget
-    let account;
-    try {
-      account = await litd.createAccount(budgetSats);
-    } catch (err) {
-      // litd not ready — create agent with placeholder
-      account = { account_id: `pending_${Date.now()}`, macaroon: null, balance_sats: budgetSats };
+    // Create litd account with budget — returns scoped macaroon
+    const account = await litd.createAccount(budgetSats, `aegis-${Date.now()}`);
+
+    if (!account.macaroon) {
+      return res.status(500).json({ error: "litd did not return a macaroon" });
     }
 
-    const { id: agentId } = db.createAgent({
-      user_credential_id: req.user.credentialId,
-      litd_account_id: account.account_id,
-      macaroon: account.macaroon,
-      budget_sats: budgetSats,
-      auth_token: authToken,
-    });
-
     // Set auto-pay threshold
-    db.default.prepare(
-      "UPDATE users SET auto_pay_threshold_sats = ? WHERE credential_id = ?"
-    ).run(autoPayLimitSats, req.user.credentialId);
-
-    const mcpConfig = {
-      mcpServers: {
-        "aegis-wallet": {
-          command: "node",
-          args: ["backend/src/mcp/server.js", "--token", authToken],
-          env: {
-            AEGIS_API_URL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001",
-          },
-        },
-      },
-    };
+    try {
+      db.default.prepare(
+        "UPDATE users SET auto_pay_threshold_sats = ? WHERE credential_id = ?"
+      ).run(autoPayLimitSats, req.user.credentialId);
+    } catch {}
 
     res.json({
       ok: true,
-      agentId,
-      authToken,
-      budgetSats,
-      status: "active",
-      mcpConfig,
-      pairingCommand: `claude mcp add aegis-wallet -- node backend/src/mcp/server.js --token ${authToken}`,
+      macaroon: account.macaroon,  // THE credential — scoped to budget
+      accountId: account.account_id,
+      budgetSats: account.balance_sats,
     });
   } catch (err) { next(err); }
 });

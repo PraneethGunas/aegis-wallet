@@ -38,11 +38,12 @@ export default function AgentSetup({ onPaired, btcPrice = 100000 }) {
   };
 
   if (credential) {
+    const agentMacaroon = credential.macaroon;
     const mcpConfig = JSON.stringify({
       mcpServers: {
         "aegis-wallet": {
           command: "node",
-          args: ["backend/src/mcp/server.js", "--token", credential.authToken],
+          args: ["backend/src/mcp/server.js", "--macaroon", agentMacaroon],
         },
       },
     }, null, 2);
@@ -51,15 +52,15 @@ export default function AgentSetup({ onPaired, btcPrice = 100000 }) {
       <div className="p-5 rounded-xl glass border border-border/50 space-y-4">
         <div className="flex items-center gap-2">
           <Key className="w-4 h-4 text-success-green" />
-          <p className="text-sm font-medium">Agent credential ready</p>
+          <p className="text-sm font-medium">Credential ready</p>
         </div>
 
         <p className="text-xs text-muted-foreground">
-          Budget: {budgetSats.toLocaleString()} sats (${budgetUsd}) — enforced by Lightning macaroon.
-          Add this to your Claude config:
+          Budget: {budgetSats.toLocaleString()} sats (${budgetUsd}).
+          Enforced cryptographically by the Lightning macaroon — no app code can override.
         </p>
 
-        {/* MCP Config */}
+        {/* MCP Config for Claude Desktop */}
         <div>
           <p className="text-[10px] text-muted-foreground font-mono uppercase tracking-wider mb-1.5">
             claude desktop config
@@ -77,26 +78,26 @@ export default function AgentSetup({ onPaired, btcPrice = 100000 }) {
           </div>
         </div>
 
-        {/* Auth Token */}
+        {/* Macaroon */}
         <div>
           <p className="text-[10px] text-muted-foreground font-mono uppercase tracking-wider mb-1.5">
-            auth token
+            spending macaroon
           </p>
           <div className="flex items-center gap-2">
-            <code className="flex-1 px-3 py-2 rounded-lg glass border border-border/50 font-mono text-[10px] break-all">
-              {credential.authToken}
+            <code className="flex-1 px-3 py-2 rounded-lg glass border border-border/50 font-mono text-[10px] break-all max-h-16 overflow-auto">
+              {agentMacaroon}
             </code>
             <button
-              onClick={() => handleCopy(credential.authToken, "token")}
+              onClick={() => handleCopy(agentMacaroon, "macaroon")}
               className="p-2 rounded-lg glass border border-border/50 hover:bg-muted transition-colors flex-shrink-0"
             >
-              {copied === "token" ? <Check className="w-3.5 h-3.5 text-success-green" /> : <Copy className="w-3.5 h-3.5" />}
+              {copied === "macaroon" ? <Check className="w-3.5 h-3.5 text-success-green" /> : <Copy className="w-3.5 h-3.5" />}
             </button>
           </div>
         </div>
 
         <p className="text-[11px] text-muted-foreground">
-          The macaroon is stored server-side. The agent only gets the auth token — it cannot exceed the budget.
+          This macaroon can only spend up to the budget. Revoke anytime from this dashboard.
         </p>
       </div>
     );
