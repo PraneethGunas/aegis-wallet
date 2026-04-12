@@ -63,7 +63,7 @@ export default function FundAgentFlow({ isOpen, onClose, balance, btcPrice }) {
                 </div>
 
                 <div className="flex gap-2">
-                  {[5, 10, 15].map((usd) => (
+                  {[Math.ceil(l1Usd * 0.5), Math.ceil(l1Usd * 0.75), Math.ceil(l1Usd)].filter(v => v > 0).map((usd) => (
                     <button
                       key={usd}
                       onClick={() => setAmountUsd(String(usd))}
@@ -91,8 +91,9 @@ export default function FundAgentFlow({ isOpen, onClose, balance, btcPrice }) {
                 </div>
 
                 {satsAmount > 0 && (
-                  <p className="text-xs text-muted-foreground font-mono text-center">
+                  <p className={`text-xs font-mono text-center ${satsAmount < MIN_CHANNEL_SATS ? "text-amber-500" : "text-muted-foreground"}`}>
                     {satsAmount.toLocaleString()} sats
+                    {satsAmount < MIN_CHANNEL_SATS && ` (min ${MIN_CHANNEL_SATS.toLocaleString()})`}
                   </p>
                 )}
 
