@@ -140,6 +140,8 @@ export function WalletProvider({ children }) {
 
       // Persist funding address — public data, safe for localStorage
       localStorage.setItem("aegis_funding_address", fundingAddress);
+      localStorage.setItem("aegis_credential_id", credentialId);
+      localStorage.setItem("aegis_auth_pubkey", authPubKey);
 
       dispatch({
         type: "SET_AUTHENTICATED",
