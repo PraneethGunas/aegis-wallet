@@ -2,7 +2,7 @@
 @import "tailwindcss";
 
 @theme inline {
-  --color-background: #F5F0EB;
+  --color-background: #FAFAFA;
   --color-foreground: #1A1A1A;
   --color-card: rgba(255, 255, 255, 0.65);
   --color-card-foreground: #1A1A1A;
@@ -60,15 +60,8 @@
 }
 
 @layer components {
-  /* Claude-style faded check background */
   .checks-bg {
-    background-image:
-      linear-gradient(45deg, rgba(0,0,0,0.018) 25%, transparent 25%),
-      linear-gradient(-45deg, rgba(0,0,0,0.018) 25%, transparent 25%),
-      linear-gradient(45deg, transparent 75%, rgba(0,0,0,0.018) 75%),
-      linear-gradient(-45deg, transparent 75%, rgba(0,0,0,0.018) 75%);
-    background-size: 24px 24px;
-    background-position: 0 0, 0 12px, 12px -12px, -12px 0px;
+    /* no-op — kept for class compatibility */
   }
 
   .glass {

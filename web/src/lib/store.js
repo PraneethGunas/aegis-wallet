@@ -132,11 +132,8 @@ export function WalletProvider({ children }) {
       const fundingAddress = bitcoin.getFundingAddress(fundingKey);
       const authPubKey = bitcoin.getAuthPublicKey(authKey);
 
-      // Register with backend
-      const result = await api.wallet.create(credentialId, authPubKey);
-      if (result?.token) {
-        api.setAuthToken(result.token);
-      }
+      // L1 is fully self-custodial — no backend call needed at bootstrap.
+      // Backend registration happens later when user needs L2 (Lightning).
 
       // Persist funding address — public data, safe for localStorage
       localStorage.setItem("aegis_funding_address", fundingAddress);
@@ -149,7 +146,6 @@ export function WalletProvider({ children }) {
         fundingAddress,
       });
 
-      ws.connect();
       return { credentialId, fundingAddress };
     } catch (err) {
       dispatch({ type: "SET_ERROR", error: err.message });
@@ -166,16 +162,12 @@ export function WalletProvider({ children }) {
       const { fundingKey } = bitcoin.deriveKeys(entropy);
       const fundingAddress = bitcoin.getFundingAddress(fundingKey);
 
-      // Get auth token from backend
-      const result = await api.wallet.create(credentialId, bitcoin.getAuthPublicKey());
-      if (result?.token) {
-        api.setAuthToken(result.token);
-      } else {
-        api.setAuthToken(credentialId);
-      }
+      // L1 auth is fully client-side — no backend call needed.
+      // Backend session (token + WS) established when user sets up L2.
 
       // Persist funding address — will be identical to previous derivation
       localStorage.setItem("aegis_funding_address", fundingAddress);
+      localStorage.setItem("aegis_credential_id", credentialId);
 
       dispatch({
         type: "SET_AUTHENTICATED",
@@ -183,7 +175,6 @@ export function WalletProvider({ children }) {
         fundingAddress,
       });
 
-      ws.connect();
       return { credentialId, fundingAddress };
     } catch (err) {
       dispatch({ type: "SET_ERROR", error: err.message });
