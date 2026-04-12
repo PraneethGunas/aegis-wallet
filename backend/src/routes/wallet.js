@@ -61,24 +61,35 @@ router.post("/login", async (req, res, next) => {
 });
 
 // ── Balance ─────────────────────────────────────────────────────────────────
-// L1 = user's self-custodial Taproot address (via mempool.space)
+// L1 = user's self-custodial Taproot addresses (via mempool.space)
 // L2 = LND Lightning channels (via litd)
+// Accepts comma-separated addresses to aggregate across all derived indices
 router.get("/balance", auth, async (req, res, next) => {
   try {
-    const fundingAddress = req.query.address; // user's bc1p... address
+    const addressParam = req.query.address || "";
+    const addresses = addressParam.split(",").filter(Boolean);
 
-    const [l1Result, l2Result, priceResult] = await Promise.allSettled([
-      fundingAddress ? mempool.getAddressBalance(fundingAddress) : Promise.resolve(null),
+    // Query all L1 addresses in parallel
+    const l1Results = await Promise.allSettled(
+      addresses.map((addr) => mempool.getAddressBalance(addr))
+    );
+
+    let l1Sats = 0;
+    let l1Unconfirmed = 0;
+    for (const r of l1Results) {
+      if (r.status === "fulfilled" && r.value) {
+        l1Sats += r.value.confirmed_sats;
+        l1Unconfirmed += r.value.unconfirmed_sats;
+      }
+    }
+
+    const [l2Result, priceResult] = await Promise.allSettled([
       lnd.getBalance(),
       fetch("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd", {
         signal: AbortSignal.timeout(3000),
       }).then((r) => r.json()),
     ]);
 
-    const l1Sats = l1Result.status === "fulfilled" && l1Result.value
-      ? l1Result.value.confirmed_sats : 0;
-    const l1Unconfirmed = l1Result.status === "fulfilled" && l1Result.value
-      ? l1Result.value.unconfirmed_sats : 0;
     const l2Sats = l2Result.status === "fulfilled"
       ? parseInt(l2Result.value.balance_sats || "0") : 0;
 
@@ -158,11 +169,12 @@ router.post("/receive", auth, async (req, res, next) => {
 router.get("/history", auth, async (req, res, next) => {
   try {
     const limit = parseInt(req.query.limit) || 20;
-    const address = req.query.address;
+    const addressParam = req.query.address || "";
+    const addresses = addressParam.split(",").filter(Boolean);
     const transactions = [];
 
-    // 1. L1 on-chain transactions from mempool.space (user's self-custodial address)
-    if (address) {
+    // 1. L1 on-chain transactions from mempool.space (all derived addresses)
+    for (const address of addresses) {
       try {
         const onchainTxs = await mempool.getAddressTransactions(address);
         for (const tx of onchainTxs) {

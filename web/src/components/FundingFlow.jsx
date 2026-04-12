@@ -1,17 +1,35 @@
 "use client";
 
-import { useState } from "react";
-import { Copy, Check, X } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Copy, Check, X, RefreshCw } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { QRCodeSVG } from "qrcode.react";
+import { getNextFundingAddress } from "@/lib/bitcoin";
 
 export default function FundingFlow({ isOpen, onClose, fundingAddress }) {
   const [copied, setCopied] = useState(false);
+  const [displayAddress, setDisplayAddress] = useState(fundingAddress);
+
+  // When opened, show the current address from props
+  useEffect(() => {
+    if (isOpen && fundingAddress) {
+      setDisplayAddress(fundingAddress);
+    }
+  }, [isOpen, fundingAddress]);
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(fundingAddress);
+    navigator.clipboard.writeText(displayAddress);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleNewAddress = () => {
+    try {
+      const { address } = getNextFundingAddress();
+      setDisplayAddress(address);
+    } catch {
+      // Keys not loaded — can't derive
+    }
   };
 
   return (
@@ -33,20 +51,29 @@ export default function FundingFlow({ isOpen, onClose, fundingAddress }) {
             </div>
 
             <div className="text-center space-y-3">
-              {fundingAddress ? (
+              {displayAddress ? (
                 <>
                   <div className="inline-block p-3 bg-white rounded-xl border border-border/30">
-                    <QRCodeSVG value={fundingAddress} size={160} />
+                    <QRCodeSVG value={displayAddress} size={160} />
                   </div>
                   <div className="flex items-center gap-2">
                     <code className="flex-1 px-3 py-2 rounded-lg glass border border-border/50 font-mono text-[11px] break-all text-left">
-                      {fundingAddress}
+                      {displayAddress}
                     </code>
                     <button onClick={handleCopy} className="p-2 rounded-lg glass border border-border/50 flex-shrink-0 hover:bg-muted transition-colors">
                       {copied ? <Check className="w-3.5 h-3.5 text-success-green" /> : <Copy className="w-3.5 h-3.5" />}
                     </button>
                   </div>
-                  <p className="text-[11px] text-muted-foreground font-mono">taproot address (bc1p...)</p>
+                  <div className="flex items-center justify-center gap-3">
+                    <p className="text-[11px] text-muted-foreground font-mono">taproot (bc1p...)</p>
+                    <button
+                      onClick={handleNewAddress}
+                      className="text-[11px] text-secondary hover:text-secondary/80 flex items-center gap-1 transition-colors"
+                    >
+                      <RefreshCw className="w-2.5 h-2.5" />
+                      new address
+                    </button>
+                  </div>
                 </>
               ) : (
                 <p className="text-sm text-muted-foreground py-4">Authenticate to view address</p>

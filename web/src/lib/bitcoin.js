@@ -87,7 +87,33 @@ export function getNextFundingAddress() {
   const nextIdx = idx + 1;
   localStorage.setItem("aegis_address_index", String(nextIdx));
 
-  return { address: getFundingAddress(nextIdx), index: nextIdx };
+  const address = getFundingAddress(nextIdx);
+  // Update the current receive address
+  localStorage.setItem("aegis_funding_address", address);
+
+  return { address, index: nextIdx };
+}
+
+/**
+ * Get the current receive address index.
+ */
+export function getCurrentAddressIndex() {
+  return parseInt(localStorage.getItem("aegis_address_index") || "0");
+}
+
+/**
+ * Get ALL derived addresses from index 0 to current.
+ * Used for balance aggregation — we need to check every address we've shown.
+ */
+export function getAllFundingAddresses() {
+  if (!_root) return [localStorage.getItem("aegis_funding_address")].filter(Boolean);
+
+  const currentIdx = getCurrentAddressIndex();
+  const addresses = [];
+  for (let i = 0; i <= currentIdx; i++) {
+    addresses.push(getFundingAddress(i));
+  }
+  return addresses;
 }
 
 /**
