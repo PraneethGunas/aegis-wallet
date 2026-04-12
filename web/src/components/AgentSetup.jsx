@@ -98,7 +98,7 @@ You're connected and ready. What would you like me to help you with?`;
       mcpServers: {
         "aegis-wallet": {
           command: "npx",
-          args: ["-y", MCP_SERVER_PATH, "--macaroon", credential.macaroon, "--user", credentialId],
+          args: ["-y", MCP_SERVER_PATH, "--macaroon", credential.macaroon, "--user", credentialId, "--threshold", String(thresholdSats)],
         },
         "402index": {
           command: "mcp-server",
