@@ -170,7 +170,7 @@ ${generatePrompt()}`;
         whileTap={{ scale: 0.98 }}
         transition={spring}
         onClick={handleGenerate}
-        disabled={creating || !budgetUsd || budgetSats < 1000}
+        disabled={creating || !budgetUsd || budgetSats < 1}
         className="w-full py-3 rounded-xl bg-secondary text-white flex items-center justify-center gap-2 disabled:opacity-40 text-sm font-medium"
       >
         {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Key className="w-4 h-4" />}
