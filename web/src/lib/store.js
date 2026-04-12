@@ -126,23 +126,16 @@ export function WalletProvider({ children }) {
       const fundingAddress = bitcoin.getFundingAddress(fundingKey);
       const authPubKey = bitcoin.getAuthPublicKey(authKey);
 
-      // Register with backend
-      const result = await api.wallet.create(credentialId, authPubKey);
-      if (result?.token) {
-        api.setAuthToken(result.token);
-      }
-
-      // Persist funding address locally — public data, safe for localStorage
+      // Persist locally — backend registration deferred until L2 funding
       localStorage.setItem("aegis_funding_address", fundingAddress);
+      localStorage.setItem("aegis_credential_id", credentialId);
+      localStorage.setItem("aegis_auth_pubkey", authPubKey);
 
       dispatch({
         type: "SET_AUTHENTICATED",
         credentialId,
         fundingAddress,
       });
-
-      // Connect WebSocket
-      ws.connect();
 
       return { credentialId, fundingAddress };
     } catch (err) {
