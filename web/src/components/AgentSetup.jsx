@@ -29,43 +29,27 @@ export default function AgentSetup({ onPaired, btcPrice = 100000, credentialId =
     setCreating(false);
   };
 
-  const generatePrompt = () => `You are my financial agent with access to a real Bitcoin Lightning wallet.
+  const generatePrompt = (macaroon) => `I'm using the Aegis wallet — a Bitcoin Lightning wallet with AI agent support. I've given you access to it via the aegis-wallet MCP server. Add this to your MCP config if it's not already there:
 
-YOUR WALLET:
-You are connected to an LND Lightning node via the aegis-wallet MCP server.
-Your spending limit is ${budgetSats.toLocaleString()} sats ($${budgetUsd}).
-This limit is enforced cryptographically by LND — you cannot exceed it.
+${JSON.stringify({ mcpServers: { "aegis-wallet": { command: "npx", args: ["-y", "aegis-wallet", "--macaroon", macaroon, "--api-url", process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001", "--user-id", credentialId] } } }, null, 2)}
 
-TOOLS:
-- get_balance() — check how much you can spend
-- pay_invoice(bolt11, purpose) — pay a Lightning invoice. Returns preimage on success.
-- decode_invoice(bolt11) — decode a BOLT11 to see amount, description, expiry
-- list_payments(limit) — view payment history
-- create_invoice(amount_sats, memo) — generate an invoice to receive payment
+This is a real wallet on Bitcoin mainnet with real money. Your spending limit is ${budgetSats.toLocaleString()} sats (~$${budgetUsd}), enforced cryptographically by LND.
 
-SPENDING RULES:
-- You can pay any invoice within your budget. No need to ask permission.
-- If a payment is rejected with "insufficient balance", you've hit your limit. Tell me.
-- Always tell me what you paid for, how much, and your remaining balance.
+You have these tools:
 
-L402 PAYMENTS:
-When you hit an HTTP 402 response:
-1. Extract the BOLT11 invoice from the response
-2. Call get_balance() to check if you can afford it
-3. Call pay_invoice(bolt11, "what this pays for")
-4. Use the returned preimage to retry: Authorization: L402 <macaroon>:<preimage>
+  get_balance()                             — your remaining spending balance
+  pay_invoice(bolt11, purpose, max_cost_sats?) — pay a Lightning invoice (max_cost_sats refuses if invoice exceeds it)
+  decode_invoice(bolt11)                    — inspect an invoice before paying
+  list_payments(limit)                      — recent payment history
+  create_invoice(amount_sats, memo)         — generate an invoice to receive a payment
+  l402_fetch(url, method?, headers?, body?, max_cost_sats?) — fetch a URL with automatic L402 payment (handles 402 → pay → retry in one call, caches tokens per domain)
+  get_spending_summary()                    — total spent, payment count, remaining balance, cached L402 domains
 
-DISCOVERING PAID SERVICES:
-Use the 402index MCP tools to search 17,000+ paid API endpoints:
-- search_services(category, protocol, health_status) — find L402/x402 APIs
-- list_categories() — browse categories
+For L402 paywalled APIs, prefer l402_fetch — it handles the entire flow automatically: makes the request, extracts the invoice from the 402, pays it, caches the token, and retries. No manual steps needed. Tokens are cached per domain so you won't re-pay on subsequent requests.
 
-CRITICAL:
-- Use ONLY the MCP tools for payments. Never use shell commands or direct LND access.
-- This is real Bitcoin on mainnet. Every payment uses real money.
-- Always report what you spent and your remaining balance.
+Use max_cost_sats on pay_invoice or l402_fetch to set a per-payment safety cap. If the invoice exceeds it, the tool refuses to pay.
 
-Ready. What would you like me to help you with?`;
+Pay any invoice within your balance — no approval needed. If a payment fails with "budget_exceeded", tell me — the invoice has been forwarded to my Aegis dashboard where I can pay it directly. After every payment, report what you paid, the cost, and your remaining balance.`;
 
   // ── After credential generated ──────────────────────────────────
   if (credential) {
@@ -89,26 +73,7 @@ Ready. What would you like me to help you with?`;
           whileTap={{ scale: 0.98 }}
           transition={spring}
           onClick={() => {
-            const bundle = `=== CLAUDE DESKTOP CONFIG ===
-Paste into Claude Desktop → Settings → Developer → Edit Config:
-
-${JSON.stringify({
-  mcpServers: {
-    "aegis-wallet": {
-      command: "npx",
-      args: ["-y", "aegis-wallet", "--macaroon", credential.macaroon],
-    },
-    "402index": {
-      command: "mcp-server",
-    },
-  },
-}, null, 2)}
-
-=== AGENT INSTRUCTIONS ===
-Paste as your first message to Claude:
-
-${generatePrompt()}`;
-            navigator.clipboard.writeText(bundle);
+            navigator.clipboard.writeText(generatePrompt(credential.macaroon));
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
           }}
@@ -126,7 +91,7 @@ ${generatePrompt()}`;
         </motion.button>
 
         <p className="text-[11px] text-muted-foreground text-center">
-          Copies config + instructions. Paste config in settings, instructions in chat.
+          Paste this as your first message to Claude. It includes the MCP config and wallet instructions.
         </p>
       </div>
     );
