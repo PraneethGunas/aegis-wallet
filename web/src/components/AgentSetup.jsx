@@ -12,7 +12,7 @@ export default function AgentSetup({ onPaired, btcPrice = 100000 }) {
   const [thresholdUsd, setThresholdUsd] = useState("2.50");
   const [creating, setCreating] = useState(false);
   const [credential, setCredential] = useState(null);
-  const [copied, setCopied] = useState(null); // "token" | "config" | null
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState(null);
 
   const budgetSats = Math.round((parseFloat(budgetUsd || 0) / btcPrice) * 1e8);
@@ -31,78 +31,69 @@ export default function AgentSetup({ onPaired, btcPrice = 100000 }) {
     setCreating(false);
   };
 
-  const handleCopy = (text, type) => {
-    navigator.clipboard.writeText(text);
-    setCopied(type);
-    setTimeout(() => setCopied(null), 2000);
-  };
-
-  if (credential) {
-    const agentMacaroon = credential.macaroon;
-    const mcpConfig = JSON.stringify({
+  const handleCopy = () => {
+    const config = JSON.stringify({
       mcpServers: {
         "aegis-wallet": {
           command: "node",
-          args: ["backend/src/mcp/server.js", "--macaroon", agentMacaroon],
+          args: ["backend/src/mcp/server.js", "--macaroon", credential.macaroon],
         },
       },
     }, null, 2);
+    navigator.clipboard.writeText(config);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
+  // ── After credential generated ──────────────────────────────────
+  if (credential) {
     return (
       <div className="p-5 rounded-xl glass border border-border/50 space-y-4">
-        <div className="flex items-center gap-2">
-          <Key className="w-4 h-4 text-success-green" />
-          <p className="text-sm font-medium">Credential ready</p>
+        <div className="w-10 h-10 rounded-full bg-success-green/10 flex items-center justify-center mx-auto">
+          <Check className="w-5 h-5 text-success-green" />
         </div>
 
-        <p className="text-xs text-muted-foreground">
-          Budget: {budgetSats.toLocaleString()} sats (${budgetUsd}).
-          Enforced cryptographically by the Lightning macaroon — no app code can override.
-        </p>
-
-        {/* MCP Config for Claude Desktop */}
-        <div>
-          <p className="text-[10px] text-muted-foreground font-mono uppercase tracking-wider mb-1.5">
-            claude desktop config
+        <div className="text-center">
+          <p className="text-sm font-medium mb-1">Spending limit set</p>
+          <p className="font-mono text-2xl" style={{ fontWeight: 600 }}>
+            ${parseFloat(budgetUsd).toFixed(2)}
           </p>
-          <div className="flex items-start gap-2">
-            <code className="flex-1 px-3 py-2 rounded-lg glass border border-border/50 font-mono text-[10px] break-all leading-relaxed max-h-28 overflow-auto">
-              {mcpConfig}
-            </code>
-            <button
-              onClick={() => handleCopy(mcpConfig, "config")}
-              className="p-2 rounded-lg glass border border-border/50 hover:bg-muted transition-colors flex-shrink-0"
-            >
-              {copied === "config" ? <Check className="w-3.5 h-3.5 text-success-green" /> : <Copy className="w-3.5 h-3.5" />}
-            </button>
-          </div>
-        </div>
-
-        {/* Macaroon */}
-        <div>
-          <p className="text-[10px] text-muted-foreground font-mono uppercase tracking-wider mb-1.5">
-            spending macaroon
+          <p className="text-xs text-muted-foreground mt-1">
+            {budgetSats.toLocaleString()} sats · auto-approve under ${thresholdUsd}
           </p>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 px-3 py-2 rounded-lg glass border border-border/50 font-mono text-[10px] break-all max-h-16 overflow-auto">
-              {agentMacaroon}
-            </code>
-            <button
-              onClick={() => handleCopy(agentMacaroon, "macaroon")}
-              className="p-2 rounded-lg glass border border-border/50 hover:bg-muted transition-colors flex-shrink-0"
-            >
-              {copied === "macaroon" ? <Check className="w-3.5 h-3.5 text-success-green" /> : <Copy className="w-3.5 h-3.5" />}
-            </button>
-          </div>
         </div>
 
-        <p className="text-[11px] text-muted-foreground">
-          This macaroon can only spend up to the budget. Revoke anytime from this dashboard.
+        <motion.button
+          whileTap={{ scale: 0.98 }}
+          transition={spring}
+          onClick={handleCopy}
+          className={`w-full py-3 rounded-xl flex items-center justify-center gap-2 text-sm font-medium transition-colors ${
+            copied
+              ? "bg-success-green/10 text-success-green border border-success-green/20"
+              : "bg-secondary text-white"
+          }`}
+        >
+          {copied ? (
+            <>
+              <Check className="w-4 h-4" />
+              Copied to clipboard
+            </>
+          ) : (
+            <>
+              <Copy className="w-4 h-4" />
+              Copy Claude config
+            </>
+          )}
+        </motion.button>
+
+        <p className="text-[11px] text-muted-foreground text-center">
+          Paste into Claude Desktop settings to give Claude spending access
         </p>
       </div>
     );
   }
 
+  // ── Set limits ──────────────────────────────────────────────────
   return (
     <div className="p-5 rounded-xl glass border border-border/50 space-y-4">
       <div className="flex items-center gap-2">
@@ -110,7 +101,7 @@ export default function AgentSetup({ onPaired, btcPrice = 100000 }) {
         <p className="text-sm font-medium">Spending policy</p>
       </div>
       <p className="text-xs text-muted-foreground">
-        Set limits for AI agents. Enforced cryptographically by Lightning — no app code can override.
+        Set limits for AI agents. Enforced cryptographically by Lightning.
       </p>
 
       {/* Budget */}
