@@ -397,18 +397,44 @@ export function WalletProvider({ children }) {
     return () => unsubs.forEach((unsub) => unsub());
   }, [fetchBalance, fetchTransactions, fetchAgentStatus]);
 
-  // Restore session on mount — credential in passkey storage, address in localStorage
+  // Restore session on mount — re-auth via passkey to reload keys into memory
   useEffect(() => {
     const credentialId = passkey.getCredentialId();
     const token = api.getAuthToken();
-    const fundingAddress = localStorage.getItem("aegis_funding_address");
     if (credentialId && token) {
+      // Show cached address immediately while re-auth happens
+      const cachedAddress = localStorage.getItem("aegis_funding_address");
       dispatch({
         type: "SET_AUTHENTICATED",
         credentialId,
-        fundingAddress,
+        fundingAddress: cachedAddress,
       });
-      ws.connect();
+
+      // Silently re-authenticate to reload keys into memory
+      // This triggers a biometric prompt — keys are needed for address derivation
+      (async () => {
+        try {
+          const { entropy } = await passkey.authenticate();
+          const { fundingKey } = bitcoin.deriveKeys(entropy);
+          const fundingAddress = bitcoin.getFundingAddress(fundingKey);
+          localStorage.setItem("aegis_funding_address", fundingAddress);
+          dispatch({
+            type: "SET_AUTHENTICATED",
+            credentialId,
+            fundingAddress,
+          });
+          ws.connect();
+          fetchBalance();
+          fetchTransactions();
+          fetchAgentStatus();
+        } catch {
+          // Auth failed/cancelled — still show cached data, just can't derive new addresses
+          ws.connect();
+          fetchBalance();
+          fetchTransactions();
+          fetchAgentStatus();
+        }
+      })();
     }
   }, []);
 
