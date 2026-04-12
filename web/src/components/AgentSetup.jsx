@@ -82,11 +82,14 @@ Use the 402index MCP to find things to buy:
 - search_services({category: "bitcoin"}) — find Bitcoin-related services
 - Categories include: ai, data, bitcoin, media, nostr, search, tools, compute, gaming, storage
 
-IMPORTANT:
+CRITICAL RULES:
+- You MUST use ONLY the aegis-wallet MCP tools for ALL payment operations. NEVER use shell commands, docker exec, lncli, curl, or any direct access to LND. The MCP tools are your ONLY interface to the wallet.
 - This is real Bitcoin on mainnet. Every payment uses real money.
-- The macaroon enforces your budget at the LND protocol layer — you literally cannot overspend.
+- The macaroon enforces your budget at the LND protocol layer — you literally cannot overspend through the MCP tools.
 - If a payment fails, check the error: "insufficient balance" means budget exceeded, "routing failed" means try again.
+- Always call get_balance() before attempting a payment to verify you have sufficient funds.
 - Always report what you spent and your remaining balance after each payment.
+- NEVER attempt to bypass spending limits by using alternative payment methods. The MCP tools are the only authorized way to spend.
 
 You're connected and ready. What would you like me to help you with?`;
 
