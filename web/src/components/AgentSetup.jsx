@@ -33,25 +33,7 @@ export default function AgentSetup({ onPaired, btcPrice = 100000 }) {
 
   const MCP_SERVER_PATH = "/Users/praneeth/Documents/Claude/Projects/Bitcoin MIT Hackathon/backend/src/mcp/server.js";
 
-  const handleCopyConfig = () => {
-    const config = JSON.stringify({
-      mcpServers: {
-        "aegis-wallet": {
-          command: "node",
-          args: [MCP_SERVER_PATH, "--macaroon", credential.macaroon],
-        },
-        "402index": {
-          command: "mcp-server",
-        },
-      },
-    }, null, 2);
-    navigator.clipboard.writeText(config);
-    setCopied("config");
-    setTimeout(() => setCopied(null), 2000);
-  };
-
-  const handleCopyPrompt = () => {
-    const prompt = `You are my financial agent with access to a real Bitcoin Lightning wallet.
+  const generatePrompt = () => `You are my financial agent with access to a real Bitcoin Lightning wallet.
 
 YOUR WALLET CONNECTION:
 You are connected to a local LND Lightning node via the aegis-wallet MCP server.
@@ -107,10 +89,24 @@ IMPORTANT:
 - Always report what you spent and your remaining balance after each payment.
 
 You're connected and ready. What would you like me to help you with?`;
-    navigator.clipboard.writeText(prompt);
-    setCopied("prompt");
+
+  const handleCopyConfig = () => {
+    const config = JSON.stringify({
+      mcpServers: {
+        "aegis-wallet": {
+          command: "node",
+          args: [MCP_SERVER_PATH, "--macaroon", credential.macaroon],
+        },
+        "402index": {
+          command: "mcp-server",
+        },
+      },
+    }, null, 2);
+    navigator.clipboard.writeText(config);
+    setCopied("config");
     setTimeout(() => setCopied(null), 2000);
   };
+
 
   // ── After credential generated ──────────────────────────────────
   if (credential) {
@@ -130,47 +126,48 @@ You're connected and ready. What would you like me to help you with?`;
           </p>
         </div>
 
-        <div className="space-y-2">
-          {/* Step 1: Config */}
-          <motion.button
-            whileTap={{ scale: 0.98 }}
-            transition={spring}
-            onClick={handleCopyConfig}
-            className={`w-full py-3 rounded-xl flex items-center justify-center gap-2 text-sm font-medium transition-colors ${
-              copied === "config"
-                ? "bg-success-green/10 text-success-green border border-success-green/20"
-                : "bg-secondary text-white"
-            }`}
-          >
-            {copied === "config" ? (
-              <><Check className="w-4 h-4" /> Config copied</>
-            ) : (
-              <><Copy className="w-4 h-4" /> 1. Copy Claude config</>
-            )}
-          </motion.button>
+        <motion.button
+          whileTap={{ scale: 0.98 }}
+          transition={spring}
+          onClick={() => {
+            const bundle = `=== CLAUDE DESKTOP CONFIG ===
+Paste this into Claude Desktop → Settings → Developer → Edit Config:
 
-          {/* Step 2: Agent prompt */}
-          <motion.button
-            whileTap={{ scale: 0.98 }}
-            transition={spring}
-            onClick={handleCopyPrompt}
-            className={`w-full py-3 rounded-xl flex items-center justify-center gap-2 text-sm font-medium transition-colors ${
-              copied === "prompt"
-                ? "bg-success-green/10 text-success-green border border-success-green/20"
-                : "glass border border-border/50 text-foreground hover:bg-muted"
-            }`}
-          >
-            {copied === "prompt" ? (
-              <><Check className="w-4 h-4" /> Prompt copied</>
-            ) : (
-              <><Copy className="w-4 h-4" /> 2. Copy agent instructions</>
-            )}
-          </motion.button>
-        </div>
+${JSON.stringify({
+  mcpServers: {
+    "aegis-wallet": {
+      command: "node",
+      args: [MCP_SERVER_PATH, "--macaroon", credential.macaroon],
+    },
+    "402index": {
+      command: "mcp-server",
+    },
+  },
+}, null, 2)}
+
+=== AGENT INSTRUCTIONS ===
+Paste this as your first message to Claude after config is set:
+
+${generatePrompt()}`;
+            navigator.clipboard.writeText(bundle);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+          }}
+          className={`w-full py-3 rounded-xl flex items-center justify-center gap-2 text-sm font-medium transition-colors ${
+            copied
+              ? "bg-success-green/10 text-success-green border border-success-green/20"
+              : "bg-secondary text-white"
+          }`}
+        >
+          {copied ? (
+            <><Check className="w-4 h-4" /> Copied to clipboard</>
+          ) : (
+            <><Copy className="w-4 h-4" /> Copy setup for Claude</>
+          )}
+        </motion.button>
 
         <p className="text-[11px] text-muted-foreground text-center">
-          Step 1: Paste config into Claude Desktop settings.
-          Step 2: Start a chat and paste the instructions.
+          Copies config + instructions. Paste config in settings, instructions in chat.
         </p>
       </div>
     );
