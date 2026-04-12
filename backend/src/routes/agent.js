@@ -36,22 +36,13 @@ function getUserAgent(credentialId) {
 // ── Create Agent — generates litd account with scoped macaroon ──────────────
 router.post("/create", auth, async (req, res, next) => {
   try {
-    const { budgetSats = 50000, autoPayLimitSats = 15000 } = req.body;
+    const { budgetSats = 50000 } = req.body;
 
     // 1. Create litd account with budget ceiling
     const account = await litd.createAccount(budgetSats, `aegis-${Date.now()}`);
 
     // 2. Bake minimal-permission macaroon tied to this account
-    // Only: pay, decode, check balance, list payments, get info
-    // Cannot: on-chain, create invoices, channels, peers
     const macaroon = await bakeAgentMacaroon(account.account_id);
-
-    // 3. Set auto-pay threshold
-    try {
-      db.default.prepare(
-        "UPDATE users SET auto_pay_threshold_sats = ? WHERE credential_id = ?"
-      ).run(autoPayLimitSats, req.user.credentialId);
-    } catch {}
 
     res.json({
       ok: true,
@@ -94,7 +85,6 @@ router.get("/status", auth, async (req, res, next) => {
 
     const spentToday = db.getAgentSpendingToday(agent.id);
     const recentTxs = db.getTransactions(agent.id, 10);
-    const user = db.getUser(req.user.credentialId);
 
     let balanceSats = agent.budget_sats;
     if (agent.litd_account_id && !agent.litd_account_id.startsWith("pending")) {
@@ -113,7 +103,6 @@ router.get("/status", auth, async (req, res, next) => {
         budgetSats: agent.budget_sats,
         balanceSats,
         spentTodaySats: spentToday.total_sats,
-        autoPayLimitSats: user?.auto_pay_threshold_sats ?? 15000,
         createdAt: agent.created_at,
         recentTransactions: recentTxs,
       },
@@ -213,17 +202,6 @@ router.post("/resume", auth, async (req, res, next) => {
     db.updateAgentStatus(agent.id, "active");
     emitToUser(req.user.credentialId, "agent_paused", { agent_id: agent.id, status: "active" });
     res.json({ ok: true, status: "active" });
-  } catch (err) { next(err); }
-});
-
-// ── Update auto-pay limit ───────────────────────────────────────────────────
-router.put("/auto-pay-limit", auth, async (req, res, next) => {
-  try {
-    const { limitSats } = req.body;
-    db.default.prepare(
-      "UPDATE users SET auto_pay_threshold_sats = ? WHERE credential_id = ?"
-    ).run(limitSats, req.user.credentialId);
-    res.json({ ok: true });
   } catch (err) { next(err); }
 });
 

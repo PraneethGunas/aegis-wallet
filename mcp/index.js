@@ -4,7 +4,7 @@
  *
  * Thin bridge between Claude and LND.
  * Budget enforced by the macaroon (LND layer).
- * Policy (thresholds, approvals) handled by the web app.
+ * Policy (spending limits, approvals) handled by the web app.
  *
  * Usage:
  *   aegis-wallet --macaroon <base64_macaroon>

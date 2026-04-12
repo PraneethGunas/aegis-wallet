@@ -10,8 +10,7 @@
     "index.js",
     "tools.js",
     "auth.js",
-    "lnd.js",
-    "README.md"
+    "lnd.js"
   ],
   "keywords": [
     "mcp",

@@ -123,10 +123,10 @@ export const wallet = {
 
 // Agent endpoints
 export const agent = {
-  create: (budgetSats, autoPayLimitSats) =>
+  create: (budgetSats) =>
     request("/agent/create", {
       method: "POST",
-      body: JSON.stringify({ budgetSats, autoPayLimitSats }),
+      body: JSON.stringify({ budgetSats }),
     }),
 
   pair: () => request("/agent/pair", { method: "POST" }),
@@ -147,12 +147,6 @@ export const agent = {
     request("/agent/approve", {
       method: "POST",
       body: JSON.stringify({ requestId, approved }),
-    }),
-
-  updateAutoPayLimit: (limitSats) =>
-    request("/agent/auto-pay-limit", {
-      method: "PUT",
-      body: JSON.stringify({ limitSats }),
     }),
 
   updateBudget: (budgetSats) =>

@@ -374,14 +374,14 @@ const slides = [
     Illustration: IllustrationBudget,
     title: "Give Claude a spending budget",
     description:
-      "Set a Lightning budget and auto-pay threshold. Claude spends within limits — no surprises.",
+      "Set a spending limit enforced by Lightning. Claude pays freely within it — cryptographically capped.",
   },
   {
     id: "approval",
     Illustration: IllustrationApproval,
     title: "You approve what matters",
     description:
-      "Payments over your threshold need biometric approval. One tap to approve, one tap to deny.",
+      "If the budget runs out, you get a notification. One tap to pay directly or top up.",
   },
   {
     id: "ready",

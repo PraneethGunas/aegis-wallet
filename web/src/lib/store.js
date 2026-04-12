@@ -43,7 +43,6 @@ const initialState = {
     isActive: false,
     budgetSats: 0,
     spentSats: 0,
-    autoPayLimitSats: 250, // $2.50 default at ~$62k
     connectedSince: null,
   },
 
@@ -300,7 +299,6 @@ export function WalletProvider({ children }) {
           isActive: data.isActive ?? false,
           budgetSats: data.budgetSats ?? 0,
           spentSats: data.spentSats ?? 0,
-          autoPayLimitSats: data.autoPayLimitSats ?? 250,
           connectedSince: data.connectedSince ?? null,
         },
       });
