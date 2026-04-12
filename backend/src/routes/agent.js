@@ -6,6 +6,7 @@ import { Router } from "express";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import * as litd from "../services/litd.js";
+import { bakeAgentMacaroon } from "../services/lnd.js";
 import * as db from "../db/index.js";
 import { emitToUser } from "../ws/notifications.js";
 
@@ -37,14 +38,15 @@ router.post("/create", auth, async (req, res, next) => {
   try {
     const { budgetSats = 50000, autoPayLimitSats = 15000 } = req.body;
 
-    // Create litd account with budget — returns scoped macaroon
+    // 1. Create litd account with budget ceiling
     const account = await litd.createAccount(budgetSats, `aegis-${Date.now()}`);
 
-    if (!account.macaroon) {
-      return res.status(500).json({ error: "litd did not return a macaroon" });
-    }
+    // 2. Bake minimal-permission macaroon tied to this account
+    // Only: pay, decode, check balance, list payments, get info
+    // Cannot: on-chain, create invoices, channels, peers
+    const macaroon = await bakeAgentMacaroon(account.account_id);
 
-    // Set auto-pay threshold
+    // 3. Set auto-pay threshold
     try {
       db.default.prepare(
         "UPDATE users SET auto_pay_threshold_sats = ? WHERE credential_id = ?"
@@ -53,7 +55,7 @@ router.post("/create", auth, async (req, res, next) => {
 
     res.json({
       ok: true,
-      macaroon: account.macaroon,  // THE credential — scoped to budget
+      macaroon,  // minimal permissions + budget ceiling
       accountId: account.account_id,
       budgetSats: account.balance_sats,
     });

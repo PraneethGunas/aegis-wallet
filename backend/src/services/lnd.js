@@ -23,7 +23,9 @@ import {
   getChainTransactions,
   getUtxos,
   broadcastChainTransaction,
+  grantAccess,
 } from "ln-service";
+import * as macaroonLib from "macaroon";
 
 // Read credentials
 const cert = readFileSync(
@@ -257,4 +259,41 @@ export async function pendingChannels() {
         },
       })),
   };
+}
+
+// ── Macaroon baking ─────────────────────────────────────────────────────────
+
+/**
+ * Bake a minimal-permission macaroon tied to a litd account.
+ *
+ * Takes the account ID from litd and creates a macaroon that can ONLY:
+ * - Pay invoices (SendPaymentSync)
+ * - Decode invoices (DecodePayReq)
+ * - Check channel balance (ChannelBalance)
+ * - List payments (ListPayments)
+ * - Get node info (GetInfo)
+ *
+ * Cannot: see on-chain balance, create invoices, open channels, manage peers.
+ * Budget ceiling enforced by the litd account caveat.
+ */
+export async function bakeAgentMacaroon(accountId) {
+  // 1. Bake macaroon with minimal permissions
+  const { macaroon: minimalB64 } = await grantAccess({
+    lnd,
+    permissions: [
+      "uri:/lnrpc.Lightning/SendPaymentSync",
+      "uri:/lnrpc.Lightning/DecodePayReq",
+      "uri:/lnrpc.Lightning/ChannelBalance",
+      "uri:/lnrpc.Lightning/ListPayments",
+      "uri:/lnrpc.Lightning/GetInfo",
+    ],
+  });
+
+  // 2. Add the litd account caveat (ties to budget ceiling)
+  const macBytes = new Uint8Array(Buffer.from(minimalB64, "base64"));
+  const m = macaroonLib.importMacaroons(macBytes)[0];
+  m.addFirstPartyCaveat(`lnd-custom account ${accountId}`);
+
+  // 3. Export as base64
+  return Buffer.from(m.exportBinary()).toString("base64");
 }
