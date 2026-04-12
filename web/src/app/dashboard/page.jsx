@@ -19,7 +19,7 @@ const spring = { type: "spring", stiffness: 300, damping: 24 };
 
 export default function Dashboard() {
   const {
-    balance, btcPrice, transactions, agent, fundingAddress,
+    balance, btcPrice, transactions, agent, fundingAddress, loading,
     pendingApproval, fetchBalance, fetchTransactions, fetchAgentStatus,
     approveRequest, denyRequest, pauseAgent, resumeAgent,
   } = useWallet();
@@ -143,7 +143,7 @@ export default function Dashboard() {
               <RefreshCw className={`w-3.5 h-3.5 ${syncing ? "animate-spin" : ""}`} />
             </motion.button>
           </div>
-          <p className="font-mono text-5xl tracking-tight mb-1" style={{ fontWeight: 600, letterSpacing: "-0.04em" }}>
+          <p className={`font-mono text-5xl tracking-tight mb-1 transition-opacity ${loading.balance ? "animate-pulse opacity-70" : ""}`} style={{ fontWeight: 600, letterSpacing: "-0.04em" }}>
             ${balance.totalUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
           <div className="flex items-center gap-2">
@@ -172,7 +172,7 @@ export default function Dashboard() {
                 <Wallet className="w-3.5 h-3.5 text-primary/70" />
                 <span className="text-xs text-muted-foreground">Savings</span>
               </div>
-              <p className="font-mono text-lg" style={{ fontWeight: 500 }}>
+              <p className={`font-mono text-lg ${loading.balance ? "animate-pulse opacity-70" : ""}`} style={{ fontWeight: 500 }}>
                 ${balance.l1Usd.toFixed(2)}
               </p>
               <div className="flex items-center gap-1.5">
@@ -198,7 +198,7 @@ export default function Dashboard() {
                 <Zap className="w-3.5 h-3.5 text-secondary/70" />
                 <span className="text-xs text-muted-foreground">Agent budget</span>
               </div>
-              <p className="font-mono text-lg" style={{ fontWeight: 500 }}>
+              <p className={`font-mono text-lg ${loading.balance ? "animate-pulse opacity-70" : ""}`} style={{ fontWeight: 500 }}>
                 ${balance.l2Usd.toFixed(2)}
               </p>
               <p className="font-mono text-xs text-muted-foreground">{balance.l2Sats.toLocaleString()} sats</p>

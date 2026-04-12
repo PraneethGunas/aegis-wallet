@@ -10,6 +10,7 @@ export default function Balance({
   fundingBTC = 0,
   agentUSD = 0,
   agentSats = 0,
+  loading = false,
 }) {
   return (
     <div>
@@ -26,7 +27,7 @@ export default function Balance({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.3 }}
-            className="text-5xl md:text-6xl"
+            className={`text-5xl md:text-6xl ${loading ? "animate-pulse opacity-70" : ""}`}
             style={{ fontWeight: 600 }}
           >
             ${totalUSD.toLocaleString("en-US", { minimumFractionDigits: 2 })}

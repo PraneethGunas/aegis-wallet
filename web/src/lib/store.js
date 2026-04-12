@@ -210,6 +210,7 @@ export function WalletProvider({ children }) {
     passkey.clearCredential();
     api.setAuthToken(null);
     localStorage.removeItem("aegis_funding_address");
+    localStorage.removeItem("aegis_cached_balance");
     ws.disconnect();
     dispatch({ type: "LOGOUT" });
   }, []);
@@ -242,6 +243,20 @@ export function WalletProvider({ children }) {
       if (data.btcPrice) {
         dispatch({ type: "SET_BTC_PRICE", price: data.btcPrice });
       }
+      // Cache last-known balance so returning users don't see $0.00 flash
+      try {
+        localStorage.setItem("aegis_cached_balance", JSON.stringify({
+          l1Sats: data.l1Sats ?? 0,
+          l1Unconfirmed: data.l1Unconfirmed ?? 0,
+          l2Sats: data.l2Sats ?? 0,
+          l1Usd: data.l1Usd ?? 0,
+          l2Usd: data.l2Usd ?? 0,
+          totalUsd: data.totalUsd ?? 0,
+          totalBtc: data.totalBtc ?? 0,
+          btcPrice: data.btcPrice ?? 0,
+          ts: Date.now(),
+        }));
+      } catch {}
     } catch (err) {
       if (err.status !== 401) {
         dispatch({ type: "SET_ERROR", error: err.message });
@@ -502,6 +517,16 @@ export function WalletProvider({ children }) {
         credentialId,
         fundingAddress: cachedAddress,
       });
+
+      // Hydrate last-known balance so UI doesn't flash $0.00
+      try {
+        const cached = JSON.parse(localStorage.getItem("aegis_cached_balance"));
+        if (cached) {
+          dispatch({ type: "SET_BALANCE", balance: cached });
+          if (cached.btcPrice) dispatch({ type: "SET_BTC_PRICE", price: cached.btcPrice });
+        }
+      } catch {}
+      dispatch({ type: "SET_LOADING", key: "balance", value: true });
 
       // Silently re-authenticate to reload keys into memory
       (async () => {
