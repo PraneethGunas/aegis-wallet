@@ -13,6 +13,8 @@ export default function Onboarding() {
   const { createWallet, authenticate, fundingAddress, error } = useWallet();
   const [loading, setLoading] = useState(null);
   const [walletExists, setWalletExists] = useState(false);
+  const [step, setStep] = useState("welcome"); // "welcome" | "fund"
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     setWalletExists(hasExistingWallet());
@@ -40,10 +42,6 @@ export default function Onboarding() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleDone = () => {
-    router.push("/dashboard");
-  };
-
   return (
     <div className="min-h-screen text-foreground flex items-center justify-center">
       <div className="relative z-10 w-full max-w-md mx-auto px-6 py-20">
@@ -57,7 +55,6 @@ export default function Onboarding() {
               transition={{ duration: 0.4 }}
               className="text-center"
             >
-              {/* Wordmark */}
               <motion.p
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -67,7 +64,6 @@ export default function Onboarding() {
                 aegis
               </motion.p>
 
-              {/* Headline */}
               <motion.h1
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -99,86 +95,86 @@ export default function Onboarding() {
                 </motion.div>
               )}
 
-              {/* CTA */}
               <motion.div
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.4 }}
                 className="space-y-4"
               >
-                <motion.button
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  transition={{ type: "spring", stiffness: 400, damping: 17 }}
-                  onClick={handleBootstrap}
-                  disabled={!!loading}
-                  className="w-full px-7 py-4 rounded-xl bg-primary text-primary-foreground text-[15px] font-medium flex items-center justify-center gap-2.5 disabled:opacity-60 glow-orange"
-                >
-                  {loading === "create" ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Fingerprint className="w-4 h-4" />
-                  )}
-                  {loading === "create" ? "Creating wallet..." : "Bootstrap Wallet"}
-                </motion.button>
+                {walletExists ? (
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    transition={{ type: "spring", stiffness: 400, damping: 17 }}
+                    onClick={handleOpenWallet}
+                    disabled={!!loading}
+                    className="w-full px-7 py-4 rounded-xl bg-primary text-primary-foreground text-[15px] font-medium flex items-center justify-center gap-2.5 disabled:opacity-60 glow-orange"
+                  >
+                    {loading === "open" ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Fingerprint className="w-4 h-4" />
+                    )}
+                    {loading === "open" ? "Authenticating..." : "Open Wallet"}
+                  </motion.button>
+                ) : (
+                  <>
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      transition={{ type: "spring", stiffness: 400, damping: 17 }}
+                      onClick={handleBootstrap}
+                      disabled={!!loading}
+                      className="w-full px-7 py-4 rounded-xl bg-primary text-primary-foreground text-[15px] font-medium flex items-center justify-center gap-2.5 disabled:opacity-60 glow-orange"
+                    >
+                      {loading === "create" ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Fingerprint className="w-4 h-4" />
+                      )}
+                      {loading === "create" ? "Creating wallet..." : "Create Wallet"}
+                    </motion.button>
 
-                <button
-                  onClick={handleOpenWallet}
-                  disabled={!!loading}
-                  className="text-[13px] text-muted-foreground hover:text-foreground transition-colors disabled:opacity-60 flex items-center justify-center gap-2 mx-auto"
-                >
-                  {loading === "open" && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  {loading === "open" ? "Authenticating..." : "Open existing wallet"}
-                </button>
+                    <button
+                      onClick={handleOpenWallet}
+                      disabled={!!loading}
+                      className="text-[13px] text-muted-foreground hover:text-foreground transition-colors disabled:opacity-60 flex items-center justify-center gap-2 mx-auto"
+                    >
+                      {loading === "open" && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                      {loading === "open" ? "Authenticating..." : "Open existing wallet"}
+                    </button>
+                  </>
+                )}
               </motion.div>
             </motion.div>
           )}
 
-          {/* CTAs — show "Open Wallet" as primary if credential exists */}
-          <motion.div
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.45 }}
-            className="flex items-center gap-5 mb-20"
-          >
-            {walletExists ? (
-              <>
-                <motion.button
-                  whileHover={{ scale: 1.03 }}
-                  whileTap={{ scale: 0.97 }}
-                  transition={{ type: "spring", stiffness: 400, damping: 17 }}
-                  onClick={handleOpenWallet}
-                  disabled={!!loading}
-                  className="px-7 py-3.5 rounded-xl bg-primary text-primary-foreground text-[15px] font-medium flex items-center gap-2.5 disabled:opacity-60 glow-orange"
-                >
-                  {loading === "open" ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Fingerprint className="w-4 h-4" />
-                  )}
-                  {loading === "open" ? "Authenticating..." : "Open Wallet"}
-                </motion.button>
-              </>
-            ) : (
-              <>
-                <motion.button
-                  whileHover={{ scale: 1.03 }}
-                  whileTap={{ scale: 0.97 }}
-                  transition={{ type: "spring", stiffness: 400, damping: 17 }}
-                  onClick={handleCreateWallet}
-                  disabled={!!loading}
-                  className="px-7 py-3.5 rounded-xl bg-primary text-primary-foreground text-[15px] font-medium flex items-center gap-2.5 disabled:opacity-60 glow-orange"
-                >
-                  {loading === "create" ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Fingerprint className="w-4 h-4" />
-                  )}
-                  {loading === "create" ? "Creating..." : "Create Wallet"}
-                </motion.button>
-              </>
-            )}
-          </motion.div>
+          {step === "fund" && (
+            <motion.div
+              key="fund"
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -16 }}
+              transition={{ duration: 0.4 }}
+              className="text-center"
+            >
+              <motion.p
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="font-mono text-sm text-muted-foreground tracking-widest uppercase mb-6"
+              >
+                aegis
+              </motion.p>
+
+              <motion.h2
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.15 }}
+                className="text-2xl mb-2 tracking-tight"
+                style={{ fontWeight: 600, letterSpacing: "-0.02em" }}
+              >
+                Fund your wallet
+              </motion.h2>
 
               <motion.p
                 initial={{ opacity: 0 }}
@@ -189,7 +185,6 @@ export default function Onboarding() {
                 Send bitcoin to your Taproot address to get started.
               </motion.p>
 
-              {/* Fund Address Option */}
               <motion.div
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -228,7 +223,6 @@ export default function Onboarding() {
                 )}
               </motion.div>
 
-              {/* Get from Exchange — Coming Soon */}
               <motion.div
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -246,7 +240,6 @@ export default function Onboarding() {
                 </div>
               </motion.div>
 
-              {/* Continue */}
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -256,7 +249,7 @@ export default function Onboarding() {
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
                   transition={{ type: "spring", stiffness: 400, damping: 17 }}
-                  onClick={handleDone}
+                  onClick={() => router.push("/dashboard")}
                   className="w-full px-7 py-4 rounded-xl bg-primary text-primary-foreground text-[15px] font-medium flex items-center justify-center gap-2.5 glow-orange"
                 >
                   I&apos;ve funded my wallet
@@ -264,7 +257,7 @@ export default function Onboarding() {
                 </motion.button>
 
                 <button
-                  onClick={handleDone}
+                  onClick={() => router.push("/dashboard")}
                   className="mt-3 text-[13px] text-muted-foreground hover:text-foreground transition-colors"
                 >
                   Skip for now
