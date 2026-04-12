@@ -1,18 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Fingerprint, Loader2, Copy, Check, ArrowRight, Building2 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { QRCodeSVG } from "qrcode.react";
 import { useWallet } from "@/lib/store";
+import { hasExistingWallet } from "@/lib/passkey";
 
 export default function Onboarding() {
   const router = useRouter();
   const { createWallet, authenticate, fundingAddress, error } = useWallet();
   const [loading, setLoading] = useState(null);
-  const [step, setStep] = useState("welcome"); // "welcome" | "fund"
-  const [copied, setCopied] = useState(false);
+  const [walletExists, setWalletExists] = useState(false);
+
+  useEffect(() => {
+    setWalletExists(hasExistingWallet());
+  }, []);
 
   const handleBootstrap = async () => {
     setLoading("create");
@@ -130,33 +134,51 @@ export default function Onboarding() {
             </motion.div>
           )}
 
-          {step === "fund" && (
-            <motion.div
-              key="fund"
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -16 }}
-              transition={{ duration: 0.4 }}
-              className="text-center"
-            >
-              <motion.p
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 0.1 }}
-                className="font-mono text-sm text-muted-foreground tracking-widest uppercase mb-6"
-              >
-                aegis
-              </motion.p>
-
-              <motion.h2
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.15 }}
-                className="text-2xl md:text-3xl mb-2 tracking-tight"
-                style={{ fontWeight: 600, letterSpacing: "-0.03em" }}
-              >
-                Fund your wallet
-              </motion.h2>
+          {/* CTAs — show "Open Wallet" as primary if credential exists */}
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.45 }}
+            className="flex items-center gap-5 mb-20"
+          >
+            {walletExists ? (
+              <>
+                <motion.button
+                  whileHover={{ scale: 1.03 }}
+                  whileTap={{ scale: 0.97 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 17 }}
+                  onClick={handleOpenWallet}
+                  disabled={!!loading}
+                  className="px-7 py-3.5 rounded-xl bg-primary text-primary-foreground text-[15px] font-medium flex items-center gap-2.5 disabled:opacity-60 glow-orange"
+                >
+                  {loading === "open" ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Fingerprint className="w-4 h-4" />
+                  )}
+                  {loading === "open" ? "Authenticating..." : "Open Wallet"}
+                </motion.button>
+              </>
+            ) : (
+              <>
+                <motion.button
+                  whileHover={{ scale: 1.03 }}
+                  whileTap={{ scale: 0.97 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 17 }}
+                  onClick={handleCreateWallet}
+                  disabled={!!loading}
+                  className="px-7 py-3.5 rounded-xl bg-primary text-primary-foreground text-[15px] font-medium flex items-center gap-2.5 disabled:opacity-60 glow-orange"
+                >
+                  {loading === "create" ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Fingerprint className="w-4 h-4" />
+                  )}
+                  {loading === "create" ? "Creating..." : "Create Wallet"}
+                </motion.button>
+              </>
+            )}
+          </motion.div>
 
               <motion.p
                 initial={{ opacity: 0 }}

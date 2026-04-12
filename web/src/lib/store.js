@@ -119,14 +119,26 @@ export function WalletProvider({ children }) {
   const createWallet = useCallback(async () => {
     try {
       dispatch({ type: "CLEAR_ERROR" });
+
+      // Guard: if wallet exists, authenticate instead of creating a new one
+      if (passkey.hasExistingWallet()) {
+        return authenticate();
+      }
+
       const { credentialId, publicKey, entropy } = await passkey.createWallet();
 
-      // Derive keys from PRF entropy
+      // Derive keys from PRF entropy (deterministic: same entropy = same keys always)
       const { fundingKey, authKey } = bitcoin.deriveKeys(entropy);
       const fundingAddress = bitcoin.getFundingAddress(fundingKey);
       const authPubKey = bitcoin.getAuthPublicKey(authKey);
 
-      // Persist locally — backend registration deferred until L2 funding
+      // Register with backend
+      const result = await api.wallet.create(credentialId, authPubKey);
+      if (result?.token) {
+        api.setAuthToken(result.token);
+      }
+
+      // Persist funding address — public data, safe for localStorage
       localStorage.setItem("aegis_funding_address", fundingAddress);
       localStorage.setItem("aegis_credential_id", credentialId);
       localStorage.setItem("aegis_auth_pubkey", authPubKey);
@@ -137,6 +149,7 @@ export function WalletProvider({ children }) {
         fundingAddress,
       });
 
+      ws.connect();
       return { credentialId, fundingAddress };
     } catch (err) {
       dispatch({ type: "SET_ERROR", error: err.message });
@@ -149,15 +162,19 @@ export function WalletProvider({ children }) {
       dispatch({ type: "CLEAR_ERROR" });
       const { credentialId, entropy } = await passkey.authenticate();
 
-      // Re-derive keys
+      // Re-derive keys — PRF is deterministic, so same credential + salt = same keys
       const { fundingKey } = bitcoin.deriveKeys(entropy);
       const fundingAddress = bitcoin.getFundingAddress(fundingKey);
 
-      // Get auth token from backend (assertion-based)
-      // For now, use the credential ID as a bearer token
-      api.setAuthToken(credentialId);
+      // Get auth token from backend
+      const result = await api.wallet.create(credentialId, bitcoin.getAuthPublicKey());
+      if (result?.token) {
+        api.setAuthToken(result.token);
+      } else {
+        api.setAuthToken(credentialId);
+      }
 
-      // Persist funding address locally — public data, safe for localStorage
+      // Persist funding address — will be identical to previous derivation
       localStorage.setItem("aegis_funding_address", fundingAddress);
 
       dispatch({
@@ -166,9 +183,7 @@ export function WalletProvider({ children }) {
         fundingAddress,
       });
 
-      // Connect WebSocket
       ws.connect();
-
       return { credentialId, fundingAddress };
     } catch (err) {
       dispatch({ type: "SET_ERROR", error: err.message });

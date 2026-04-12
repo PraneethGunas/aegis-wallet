@@ -1,27 +1,26 @@
 /**
  * WebAuthn PRF key derivation (CLIENT-SIDE only)
  *
- * createWallet()     — navigator.credentials.create() with PRF extension
- * authenticate()     — navigator.credentials.get() with PRF, re-derives entropy
- * getCredentialId()  — return stored credential ID for API calls
+ * Wallet flow:
+ *   1. createWallet()  — credentials.create() ONCE to register passkey
+ *                         then immediate credentials.get() to eval PRF
+ *   2. authenticate()  — credentials.get() with stored credential + salt
+ *                         always returns the same 32-byte entropy
+ *
+ * PRF guarantee: same credential + same salt = same output, every time.
+ * Each credentials.create() makes a NEW credential with a NEW PRF secret.
+ * Never call create() twice — that generates a different wallet.
  *
  * Salt: "aegis-wallet-v1"
- * PRF(passkey_credential, salt) → 32 bytes → BIP39 mnemonic → BIP32 master key
  */
 
 const PRF_SALT = "aegis-wallet-v1";
 const CREDENTIAL_KEY = "aegis_credential_id";
 
-/**
- * Convert a string to a Uint8Array (UTF-8 encoded) for use as PRF salt
- */
 function saltToBytes(salt) {
   return new TextEncoder().encode(salt);
 }
 
-/**
- * Convert an ArrayBuffer to a base64url string (for credential IDs)
- */
 function bufferToBase64url(buffer) {
   const bytes = new Uint8Array(buffer);
   let str = "";
@@ -29,9 +28,6 @@ function bufferToBase64url(buffer) {
   return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-/**
- * Convert a base64url string back to a Uint8Array
- */
 function base64urlToBuffer(base64url) {
   const base64 = base64url.replace(/-/g, "+").replace(/_/g, "/");
   const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
@@ -41,32 +37,40 @@ function base64urlToBuffer(base64url) {
   return bytes;
 }
 
-/**
- * Extract PRF output from WebAuthn extension results.
- * Returns 32-byte Uint8Array entropy or null if PRF not supported.
- */
 function extractPrfOutput(extensionResults) {
   const prf = extensionResults?.prf;
-  if (!prf?.results?.first) {
-    return null;
-  }
+  if (!prf?.results?.first) return null;
   return new Uint8Array(prf.results.first);
 }
 
 /**
- * Create a new wallet via WebAuthn passkey with PRF extension.
+ * Check if a wallet credential already exists.
+ */
+export function hasExistingWallet() {
+  return !!localStorage.getItem(CREDENTIAL_KEY);
+}
+
+/**
+ * Create a new wallet. Call ONCE — ever.
  *
- * 1. navigator.credentials.create() with PRF extension
- * 2. Extract 32-byte PRF entropy
- * 3. Store credential ID in localStorage
- * 4. Return { credentialId, publicKey, entropy }
+ * 1. credentials.create() to register passkey (signals PRF support)
+ * 2. Immediately credentials.get() to evaluate PRF with our salt
+ * 3. Store credential ID — this is the permanent wallet identity
+ *
+ * Calling this again creates a DIFFERENT wallet with DIFFERENT keys.
  */
 export async function createWallet() {
-  const salt = saltToBytes(PRF_SALT);
+  // Guard: refuse to create if wallet already exists
+  if (hasExistingWallet()) {
+    throw new Error(
+      "Wallet already exists. Use authenticate() to open it. " +
+      "Creating again would generate a different wallet with different keys."
+    );
+  }
 
-  // Generate a random user ID for the WebAuthn credential
   const userId = crypto.getRandomValues(new Uint8Array(32));
 
+  // Step 1: Register the passkey — only signal PRF support, don't eval yet
   const credential = await navigator.credentials.create({
     publicKey: {
       challenge: crypto.getRandomValues(new Uint8Array(32)),
@@ -80,8 +84,8 @@ export async function createWallet() {
         displayName: "Aegis Wallet User",
       },
       pubKeyCredParams: [
-        { alg: -7, type: "public-key" }, // ES256
-        { alg: -257, type: "public-key" }, // RS256
+        { alg: -7, type: "public-key" },   // ES256
+        { alg: -257, type: "public-key" },  // RS256
       ],
       authenticatorSelection: {
         authenticatorAttachment: "platform",
@@ -89,11 +93,7 @@ export async function createWallet() {
         userVerification: "required",
       },
       extensions: {
-        prf: {
-          eval: {
-            first: salt,
-          },
-        },
+        prf: {},  // Signal support only — don't eval during create
       },
     },
   });
@@ -105,66 +105,57 @@ export async function createWallet() {
       : credential.response.attestationObject
   );
 
-  // Extract PRF entropy
-  const extensionResults = credential.getClientExtensionResults();
-  let entropy = extractPrfOutput(extensionResults);
-
-  // If PRF was not available during creation (some authenticators only support
-  // it during assertion), immediately do a get() to retrieve it
-  if (!entropy) {
-    const assertion = await navigator.credentials.get({
-      publicKey: {
-        challenge: crypto.getRandomValues(new Uint8Array(32)),
-        rpId: window.location.hostname,
-        allowCredentials: [
-          {
-            type: "public-key",
-            id: credential.rawId,
-          },
-        ],
-        userVerification: "required",
-        extensions: {
-          prf: {
-            eval: {
-              first: salt,
-            },
-          },
-        },
-      },
-    });
-
-    const assertionExtensions = assertion.getClientExtensionResults();
-    entropy = extractPrfOutput(assertionExtensions);
-
-    if (!entropy) {
-      throw new Error(
-        "Your device does not support the PRF extension. " +
-          "Please use a device with biometric authentication (Face ID, Touch ID, Windows Hello)."
-      );
-    }
+  // Check if PRF is supported
+  const createExtensions = credential.getClientExtensionResults();
+  if (createExtensions?.prf?.enabled === false) {
+    throw new Error(
+      "Your device does not support the PRF extension. " +
+      "Please use a device with biometric authentication (Face ID, Touch ID, Windows Hello)."
+    );
   }
 
-  // Store credential ID for future authentication
+  // Store credential ID BEFORE get() — this is the permanent wallet identity
   localStorage.setItem(CREDENTIAL_KEY, credentialId);
+
+  // Step 2: Immediately authenticate to get PRF entropy
+  const entropy = await evaluatePrf(credential.rawId);
 
   return { credentialId, publicKey, entropy };
 }
 
 /**
- * Authenticate with an existing passkey and re-derive PRF entropy.
- *
- * 1. navigator.credentials.get() with PRF extension
- * 2. Re-derive 32-byte entropy from same salt
- * 3. Return { credentialId, entropy }
+ * Authenticate with the existing passkey and derive PRF entropy.
+ * Same credential + same salt = same 32-byte output. Always.
  */
 export async function authenticate() {
-  const salt = saltToBytes(PRF_SALT);
   const storedCredentialId = localStorage.getItem(CREDENTIAL_KEY);
+  if (!storedCredentialId) {
+    throw new Error("No wallet found. Create one first.");
+  }
 
-  const options = {
+  const rawId = base64urlToBuffer(storedCredentialId).buffer;
+  const entropy = await evaluatePrf(rawId, storedCredentialId);
+
+  return { credentialId: storedCredentialId, entropy };
+}
+
+/**
+ * Core PRF evaluation via credentials.get().
+ * This is where the deterministic 32-byte secret comes from.
+ */
+async function evaluatePrf(rawId, credentialIdB64) {
+  const salt = saltToBytes(PRF_SALT);
+
+  const assertion = await navigator.credentials.get({
     publicKey: {
       challenge: crypto.getRandomValues(new Uint8Array(32)),
       rpId: window.location.hostname,
+      allowCredentials: [
+        {
+          type: "public-key",
+          id: rawId,
+        },
+      ],
       userVerification: "required",
       extensions: {
         prf: {
@@ -174,46 +165,31 @@ export async function authenticate() {
         },
       },
     },
-  };
+  });
 
-  // If we have a stored credential ID, scope to it
-  if (storedCredentialId) {
-    options.publicKey.allowCredentials = [
-      {
-        type: "public-key",
-        id: base64urlToBuffer(storedCredentialId).buffer,
-      },
-    ];
-  }
-
-  const assertion = await navigator.credentials.get(options);
-
-  const credentialId = bufferToBase64url(assertion.rawId);
   const extensionResults = assertion.getClientExtensionResults();
   const entropy = extractPrfOutput(extensionResults);
 
   if (!entropy) {
     throw new Error(
       "Failed to derive key material from passkey. " +
-        "Your device may not support the PRF extension."
+      "Your device may not support the PRF extension."
     );
   }
 
-  // Update stored credential ID
-  localStorage.setItem(CREDENTIAL_KEY, credentialId);
-
-  return { credentialId, entropy };
+  return entropy;
 }
 
 /**
- * Return stored credential ID from localStorage, or null if not set.
+ * Return stored credential ID, or null.
  */
 export function getCredentialId() {
   return localStorage.getItem(CREDENTIAL_KEY);
 }
 
 /**
- * Clear stored credential (for logout/disconnect).
+ * Clear stored credential (logout). Does NOT delete the passkey from the device.
+ * User can re-authenticate later and get the same keys.
  */
 export function clearCredential() {
   localStorage.removeItem(CREDENTIAL_KEY);
