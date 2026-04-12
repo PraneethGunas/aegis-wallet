@@ -255,7 +255,7 @@ Every failure response includes a next_action or instruction field.`,
 
       // ── Gate 3: Auto-pay threshold ───────────────────────────────────────
       const user = db.getUser(agent.user_credential_id);
-      const threshold = user?.auto_pay_threshold_sats ?? 15000;
+      const threshold = agent.auto_pay_threshold_sats || user?.auto_pay_threshold_sats || 15000;
 
       if (!approval_id && invoiceAmount > threshold) {
         return reply({
@@ -385,9 +385,9 @@ Every failure response includes a next_action or instruction field.`,
       return reply({
         balance_sats,
         balance_usd: satsToUsd(balance_sats, btcPrice),
-        auto_pay_threshold_sats: user?.auto_pay_threshold_sats ?? 15000,
+        auto_pay_threshold_sats: agent.auto_pay_threshold_sats || user?.auto_pay_threshold_sats || 15000,
         auto_pay_threshold_usd: satsToUsd(
-          user?.auto_pay_threshold_sats ?? 15000,
+          agent.auto_pay_threshold_sats || user?.auto_pay_threshold_sats || 15000,
           btcPrice
         ),
       });
