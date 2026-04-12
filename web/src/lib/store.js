@@ -488,9 +488,12 @@ export function WalletProvider({ children }) {
   }, [fetchBalance, fetchTransactions, fetchAgentStatus]);
 
   // Restore session on mount — re-auth via passkey to reload keys into memory
+  // Skip on landing page (/) — user will auth through onboarding buttons
   useEffect(() => {
     const credentialId = passkey.getCredentialId();
-    if (credentialId) {
+    const isLandingPage = typeof window !== "undefined" && window.location.pathname === "/";
+
+    if (credentialId && !isLandingPage) {
       // Show cached address immediately while re-auth happens
       const cachedAddress = localStorage.getItem("aegis_funding_address");
       dispatch({
@@ -500,7 +503,6 @@ export function WalletProvider({ children }) {
       });
 
       // Silently re-authenticate to reload keys into memory
-      // This triggers a biometric prompt — keys are needed for address derivation
       (async () => {
         try {
           const { entropy } = await passkey.authenticate();
@@ -524,6 +526,14 @@ export function WalletProvider({ children }) {
           fetchAgentStatus();
         }
       })();
+    } else if (credentialId && isLandingPage) {
+      // On landing page: just set cached state, no passkey prompt
+      const cachedAddress = localStorage.getItem("aegis_funding_address");
+      dispatch({
+        type: "SET_AUTHENTICATED",
+        credentialId,
+        fundingAddress: cachedAddress,
+      });
     }
   }, []);
 
