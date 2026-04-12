@@ -96,6 +96,31 @@ export async function newAddress(type = "TAPROOT_PUBKEY") {
 export async function sendPayment(bolt11, agentMacaroon) {
   try {
     const connection = agentMacaroon ? getAgentLnd(agentMacaroon) : lnd;
+
+    if (agentMacaroon) {
+      // Agent macaroons use litd accounts. The litd account middleware cannot
+      // handle streaming RPCs (Router/SendPaymentV2), so use the legacy
+      // unary SendPaymentSync instead.
+      const result = await new Promise((resolve, reject) => {
+        connection.default.sendPaymentSync({ payment_request: bolt11 }, (err, res) => {
+          if (err) reject(err);
+          else resolve(res);
+        });
+      });
+      if (result.payment_error) {
+        return { success: false, error: result.payment_error };
+      }
+      const { balance_sats } = await getBalance(agentMacaroon);
+      return {
+        success: true,
+        amount_sats: Number(result.payment_route?.total_amt || 0),
+        fee_sats: Number(result.payment_route?.total_fees || 0),
+        preimage: Buffer.from(result.payment_preimage).toString("hex"),
+        balance_remaining_sats: balance_sats,
+      };
+    }
+
+    // Admin macaroon — use ln-service's pay() (streaming is fine without litd accounts)
     const result = await pay({ lnd: connection, request: bolt11 });
     const { balance_sats } = await getBalance(agentMacaroon);
     return {
@@ -106,7 +131,7 @@ export async function sendPayment(bolt11, agentMacaroon) {
       balance_remaining_sats: balance_sats,
     };
   } catch (err) {
-    return { success: false, error: err.message };
+    return { success: false, error: err.details || err.message };
   }
 }
 

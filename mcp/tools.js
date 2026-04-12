@@ -34,6 +34,12 @@ function errorReply(message) {
   return { content: [{ type: "text", text: JSON.stringify({ error: message }) }], isError: true };
 }
 
+const MAX_BODY_CHARS = 20_000;
+function truncateBody(text) {
+  if (text.length <= MAX_BODY_CHARS) return text;
+  return text.slice(0, MAX_BODY_CHARS) + `\n\n... [truncated — ${text.length} chars total, showing first ${MAX_BODY_CHARS}]`;
+}
+
 function wrapTool(handler) {
   return async (args) => {
     try {
@@ -256,7 +262,7 @@ export function registerTools(server, getAgentContext, opts = {}) {
         return reply({
           status: res.status,
           headers: Object.fromEntries(res.headers.entries()),
-          body: responseBody,
+          body: truncateBody(responseBody),
           paid: false,
           cached_token: !!cached,
         });
@@ -340,7 +346,7 @@ export function registerTools(server, getAgentContext, opts = {}) {
       return reply({
         status: retryRes.status,
         headers: Object.fromEntries(retryRes.headers.entries()),
-        body: retryBody,
+        body: truncateBody(retryBody),
         paid: true,
         amount_sats: payment.amount_sats,
         amount_usd: satsToUsd(payment.amount_sats, btcPrice),

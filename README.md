@@ -1,14 +1,12 @@
 # Aegis — The Agentic Bitcoin Wallet
 
-A seedless Bitcoin wallet where Claude is your AI financial agent — spending within cryptographically enforced Lightning budgets, hitting real budget walls, and escalating to your biometric approval when it needs more.
+A seedless Bitcoin wallet where Claude is your AI financial agent. Spending is enforced cryptographically by Lightning macaroons — not application code. No seed phrase. No 24 words. Your keys live in your device's secure enclave, derived from a passkey.
 
-No seed phrase. No 24 words. Your keys live in your device's secure enclave, derived from a passkey. Face ID is your signature.
+Built at MIT Bitcoin Hackathon 2026.
 
 ---
 
 ## How It Works
-
-Aegis splits custody across two layers:
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -21,17 +19,16 @@ Aegis splits custody across two layers:
 ├─────────────────────────────────────────────────┤
 │  L2: SPENDING (Custodial Lightning)             │
 │  LND + litd node. Claude operates here via MCP. │
-│  Passkey = auth only. LND holds signing keys.    │
-│  Macaroon-enforced budget ceiling.               │
-│  Exposure limited to spending balance only.      │
+│  Scoped macaroon = budget ceiling.               │
+│  One slider. One number. LND enforces it.        │
 └─────────────────────────────────────────────────┘
 ```
 
-**Layer 1 (Funding)** — A standard Taproot address on Bitcoin mainnet. Your passkey derives the private key AND signs all on-chain transactions — the passkey IS the key. It never leaves your browser. This is a simple self-custody funding wallet. No covenants, no multi-sig, no agent involvement. If our server disappears, you still have your key.
+**Layer 1 (Funding)** — A standard Taproot address (P2TR, BIP 86) on Bitcoin mainnet. Your passkey derives the private key AND signs all on-chain transactions in the browser. The key never leaves your device. If our server disappears, you still have your key.
 
-**Layer 2 (Spending)** — An LND Lightning node wrapped by litd. Claude gets wallet tools via an MCP server backed by a scoped macaroon (a cryptographic bearer token) with a hard spending ceiling enforced by LND's RPC middleware. Payments are instant. Claude can pay invoices, check balances, and request more budget — all within its ceiling. Anything above the limit triggers a biometric approval prompt. The passkey authenticates you to our backend on L2 but does NOT sign Lightning transactions — LND holds those keys.
+**Layer 2 (Spending)** — An LND Lightning node wrapped by litd. Claude gets wallet tools via an MCP server with a scoped macaroon tied to a litd account. The macaroon has a hard spending ceiling enforced by LND's RPC middleware — not our code. Claude can pay invoices, fetch L402 APIs, and check balances. When the budget runs out, the invoice is forwarded to your dashboard where you can pay it directly.
 
-**Passkey (Control Plane)** — WebAuthn PRF extension derives keys from your device's secure enclave. No seed phrase is ever generated, shown, or stored. On L1, the passkey derives the key and signs. On L2, the passkey authenticates. The passkey credential ID IS the user identity — no separate account or login. Recovery = passkey syncs to your new device, wallet regenerates deterministically.
+**Passkey** — WebAuthn PRF extension derives keys from your device's secure enclave. No seed phrase is ever generated or stored. On L1, the passkey derives the key and signs. On L2, the passkey authenticates. Recovery = passkey syncs to your new device, wallet regenerates deterministically.
 
 ---
 
@@ -42,51 +39,80 @@ Aegis splits custody across two layers:
 │                   USER'S BROWSER                      │
 │                                                        │
 │  Secure Enclave ──→ Passkey (PRF) ──→ Key Derivation │
-│                                                        │
 │  funding_key:  m/86h/0h/0h/0/0  (Taproot, L1 signer)│
 │  auth_key:     m/84h/0h/0h/0/0  (L2 auth only)      │
-│                                                        │
-│  On-chain transactions signed HERE, in the browser.   │
-│  Keys NEVER sent to the server.                        │
+│  On-chain transactions signed HERE. Keys NEVER sent.  │
 └──────────────────────┬───────────────────────────────┘
                        │ HTTPS / WSS
 ┌──────────────────────▼───────────────────────────────┐
 │                   BACKEND SERVER                      │
-│                                                        │
-│  Node.js + Express API                                │
-│  ├── LND + litd ← L2 Lightning payments              │
-│  ├── MCP Server ← exposes wallet tools to Claude     │
-│  └── Scoped macaroon ← budget-limited, server-side   │
+│  Node.js + Express + WebSocket                        │
+│  ├── LND + litd ← Lightning payments                 │
+│  ├── litd accounts ← budget enforcement              │
+│  └── /agent/pay-direct ← user pays when agent can't  │
 └──────────────────────────────────────────────────────┘
 
 ┌──────────────────────┐         ┌──────────────────────┐
-│  Claude               │  MCP   │  Aegis MCP Server     │
-│  (Code / Cowork /     │◄──────►│  ├─ pay_invoice       │
-│   Chat + MCP)         │        │  ├─ get_balance       │
-│                        │        │  ├─ request_approval  │
-│  Claude IS the agent.  │        │  ├─ request_topup     │
+│  Claude               │  MCP   │  aegis-wallet MCP     │
+│  (Desktop / Code /    │◄──────►│  ├─ pay_invoice       │
+│   Cowork)             │ stdio  │  ├─ l402_fetch        │
+│                        │        │  ├─ get_balance       │
+│  Claude IS the agent.  │        │  ├─ decode_invoice    │
+│  No custom bot code.   │        │  ├─ create_invoice    │
+│                        │        │  ├─ list_payments     │
+│                        │        │  ├─ get_spending_sum. │
 │                        │        │  └─ macaroon (hidden) │
 └──────────────────────┘         └──────────────────────┘
 ```
 
-### Agent Budget Enforcement
+### Budget Enforcement
 
 ```
-Claude calls pay_invoice via MCP
-  → MCP server attaches scoped macaroon to LND RPC call
-  → LND RPC middleware checks: virtual balance >= amount + fees?
-    YES → payment proceeds, balance deducted
-    NO  → "insufficient balance" — payment rejected
+User sets spending limit in UI ($2.50 → 2,500 sats)
+  → Backend creates litd account with that ceiling
+  → Bakes scoped macaroon: routerrpc + 5 URI permissions + account caveat
+  → MCP server receives macaroon via --macaroon CLI arg
 
-Two escalation paths:
-  → Payment over auto-pay threshold: Claude calls request_approval
-    → User gets biometric prompt for THIS specific payment
-  → Budget exhausted: Claude calls request_topup
-    → User approves increasing the overall budget
+Claude calls pay_invoice or l402_fetch via MCP
+  → MCP attaches scoped macaroon to LND gRPC call
+  → LND RPC middleware checks: account balance >= amount + fees?
+    YES → payment routed, balance deducted
+    NO  → rejected at LND layer — MCP sends WebSocket to dashboard
+          → User sees "Budget exceeded" banner → taps "Pay directly"
+          → Backend pays with admin macaroon (user's direct payment)
 
 Claude cannot see on-chain funds, node channels, or real balance.
-Claude cannot bake new macaroons or escalate permissions.
+Claude cannot bake new macaroons or escalate its own permissions.
 ```
+
+---
+
+## MCP Server (`aegis-wallet`)
+
+The MCP server is a standalone npm package. Claude Desktop runs it as a subprocess.
+
+```bash
+npx aegis-wallet --macaroon <base64> [--api-url http://localhost:3001] [--user-id <credential>]
+```
+
+### Tools (7)
+
+| Tool | Description |
+|------|-------------|
+| `pay_invoice(bolt11, purpose, max_cost_sats?)` | Pay a Lightning invoice. Optional per-payment cost cap. |
+| `l402_fetch(url, method?, headers?, body?, max_cost_sats?)` | Fetch URL with automatic L402 payment. Handles 402 → pay → retry in one call. Caches tokens per domain. |
+| `get_balance()` | Check remaining spending balance (sats + USD). |
+| `decode_invoice(bolt11)` | Inspect a BOLT11 invoice before paying. |
+| `create_invoice(amount_sats, memo)` | Generate a Lightning invoice to receive payment. |
+| `list_payments(limit)` | Recent payment history with amounts and fees. |
+| `get_spending_summary()` | Total spent, payment count, remaining balance, cached L402 domains. |
+
+### Key Features
+
+- **`l402_fetch`** — One-call L402 flow inspired by [lnget](https://github.com/lightninglabs/lightning-agent-tools). Hit a URL, handle the 402 challenge, pay the invoice, cache the token, retry with auth header. No manual steps.
+- **`max_cost_sats`** — Per-payment safety cap (like `lnget --max-cost`). Refuses to pay if invoice exceeds it.
+- **Token cache** — L402 tokens cached per domain in memory. Avoids re-paying the same service.
+- **Budget escalation** — When LND rejects a payment, the MCP notifies the user's dashboard via WebSocket. User can pay directly with one tap.
 
 ---
 
@@ -95,13 +121,12 @@ Claude cannot bake new macaroons or escalate permissions.
 | Layer | Technology |
 |-------|-----------|
 | Frontend | Next.js + Tailwind CSS |
-| Backend | Node.js + Express |
+| Backend | Node.js + Express + WebSocket |
 | AI Agent | Claude (user's subscription) — no custom agent runtime |
-| MCP Server | Node.js (@modelcontextprotocol/sdk) |
-| Lightning | LND v0.18+ wrapped by litd |
-| Passkey | @simplewebauthn/browser + PRF extension |
-| Tx Signing | bitcoinjs-lib + tiny-secp256k1 (in browser, never on server) |
-| Database | SQLite (dev) / Postgres (prod) |
+| MCP Server | Node.js (`@modelcontextprotocol/sdk`) — standalone npm package |
+| Lightning | LND + litd (Docker) |
+| Passkey | `@simplewebauthn/browser` + PRF extension |
+| Tx Signing | `@scure/bip32` + `@scure/bip39` + `tiny-secp256k1` (in browser) |
 | Network | Bitcoin mainnet |
 
 ---
@@ -111,58 +136,39 @@ Claude cannot bake new macaroons or escalate permissions.
 ### Prerequisites
 
 - Node.js 22+ (`nvm install 22`)
-- Docker + Docker Compose (for LND + litd)
+- Docker + Docker Compose
 
-### 1. Start LND + litd (Docker)
+### 1. Start LND + litd
 
 ```bash
 docker compose up -d
 ```
 
-LND and litd run in Docker containers on mainnet.
-
-### 2. Fund the Wallet
+### 2. Fund the wallet and open a channel
 
 ```bash
-docker exec aegis-lnd lncli newaddress p2tr
-# Send mainnet sats to this address
+docker exec litd lncli newaddress p2tr
+# Send mainnet sats to this address, then:
+docker exec litd lncli openchannel --node_key <peer_pubkey> --local_amt 20000
 ```
 
-### 3. Open a Lightning Channel
+### 3. Backend
 
 ```bash
-docker exec aegis-lnd lncli openchannel --node_key <peer_pubkey> --local_amt 1000000
+cd backend && npm install && npm run dev    # http://localhost:3001
 ```
 
-### 4. Start the Backend
+### 4. Frontend
 
 ```bash
-cd backend
-cp .env.example .env   # Edit with your credentials
-npm install
-npm run dev             # http://localhost:3001
+cd web && npm install && npm run dev        # http://localhost:3000
 ```
 
-### 5. Start the Frontend
+### 5. Create wallet + pair Claude
 
-```bash
-cd web
-npm install
-npm run dev             # http://localhost:3000
-```
-
-### Environment Variables
-
-Create `backend/.env` from the example:
-
-```bash
-LND_HOST=localhost:10009
-LND_CERT_PATH=~/.lnd/tls.cert
-LND_MACAROON_PATH=~/.lnd/data/chain/bitcoin/mainnet/admin.macaroon
-LITD_HOST=localhost:8443
-PORT=3001
-NEXT_PUBLIC_API_URL=http://localhost:3001
-```
+1. Open http://localhost:3000 → create wallet with passkey
+2. Set spending limit with slider → "Generate credential"
+3. Copy the setup message → paste into Claude Desktop
 
 ---
 
@@ -170,96 +176,76 @@ NEXT_PUBLIC_API_URL=http://localhost:3001
 
 ```
 aegis/
+├── mcp/                    # Standalone MCP server (npm: aegis-wallet)
+│   ├── index.js            # Entry point, CLI arg parsing
+│   ├── tools.js            # 7 wallet tools + L402 token cache
+│   ├── lnd.js              # ln-service gRPC client (SendPaymentSync)
+│   └── auth.js             # Rate limiting (30 calls/min)
 ├── backend/
 │   ├── src/
-│   │   ├── server.js              # Express + WebSocket server
-│   │   ├── routes/                # API endpoints (wallet, agent, ln)
-│   │   ├── services/              # LND, litd, macaroon, passkey
-│   │   ├── mcp/                   # MCP server, tools, auth, pairing
-│   │   ├── ws/                    # WebSocket notifications
-│   │   └── db/                    # Schema + data access
-│   └── scripts/                   # Infrastructure setup scripts
+│   │   ├── server.js       # Express + WebSocket server
+│   │   ├── routes/         # wallet, agent, ln endpoints
+│   │   ├── services/       # lnd.js, litd.js, mempool.js
+│   │   ├── ws/             # Real-time notifications
+│   │   └── db/             # SQLite schema + access
 ├── web/
 │   ├── src/
-│   │   ├── app/                   # Next.js pages (dashboard, send, receive, agent)
-│   │   ├── lib/                   # Client-side crypto (passkey, bitcoin)
-│   │   └── components/            # UI components (balance, tx list, agent budget, pairing QR)
-│   └── public/
-├── docs/
-│   ├── PITCH_DECK.md
-│   └── DEMO_SCRIPT.md
-├── CLAUDE.md                      # Claude Code instructions
-├── PROJECT_SPEC.md                # Full technical specification
-├── CONTRIBUTING.md
-├── SECURITY.md
-└── LICENSE
+│   │   ├── app/            # Next.js pages (landing, dashboard)
+│   │   ├── lib/            # passkey.js, bitcoin.js, api.js, ws.js, store.js
+│   │   └── components/     # AgentSetup, ApprovalBanner, Balance, TxList
+├── CLAUDE.md               # Claude Code instructions
+└── PROJECT_SPEC.md         # Full technical specification
 ```
 
 ---
 
-## API Reference
+## API Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/wallet/create` | POST | Store passkey credential ID + public key (wallet creation IS identity) |
-| `/wallet/balance` | GET | Combined L1 + L2 balance |
-| `/wallet/history` | GET | Unified transaction history |
-| `/wallet/send` | POST | Send on-chain tx (user signs in browser) |
-| `/wallet/receive` | POST | Generate Lightning invoice or funding address |
-| `/agent/create` | POST | Create litd account + scoped macaroon |
-| `/agent/pair` | POST | Generate MCP pairing config + QR |
-| `/agent/topup` | POST | Increase agent budget (requires WebAuthn assertion) |
-| `/agent/pause` | POST | Freeze agent macaroon |
-| `/agent/status` | GET | Agent budget + activity log |
-| `/ln/fund` | POST | Construct unsigned tx to fund LN (client signs) |
-| `/ln/withdraw` | POST | Withdraw LN balance to on-chain address |
-
-Auth: Every request includes a WebAuthn assertion or short-lived token from a recent assertion. The passkey credential ID IS the user identity. No separate register/login flow.
+| `/wallet/create` | POST | Register passkey credential (wallet = identity) |
+| `/wallet/balance` | GET | Combined L1 (mempool.space) + L2 (LND) balance |
+| `/wallet/history` | GET | Unified tx history across both layers |
+| `/agent/create` | POST | Create litd account + bake scoped macaroon |
+| `/agent/budget` | PUT | Update spending limit (same macaroon, new ceiling) |
+| `/agent/pay-direct` | POST | User pays a bolt11 directly (admin macaroon) |
+| `/agent/pause` | POST | Freeze agent — macaroon stops working instantly |
+| `/agent/revoke` | POST | Delete litd account — macaroon permanently invalid |
+| `/ln/fund` | POST | Broadcast signed tx to fund Lightning |
+| `/ln/open-channel` | POST | Open channel to default peer |
 
 ---
 
-## Key Concepts
+## Macaroon Permissions
 
-### Passkey Key Derivation
+The agent's scoped macaroon grants exactly these gRPC methods:
 
-```
-WebAuthn PRF(credential, salt="aegis-wallet-v1") → 32 bytes entropy
-  → BIP39 mnemonic (never displayed) → BIP32 master key
-  → funding_key:  m/86h/0h/0h/0/0  (Taproot, mainnet — signs L1 txs)
-  → auth_key:     m/84h/0h/0h/0/0  (mainnet — L2 auth only)
-```
+| Granted | Purpose |
+|---------|---------|
+| `routerrpc.Router/SendPaymentV2` | Pay invoices (streaming) |
+| `routerrpc.Router/TrackPaymentV2` | Track payment status |
+| `lnrpc.Lightning/SendPaymentSync` | Pay invoices (legacy fallback) |
+| `lnrpc.Lightning/DecodePayReq` | Decode BOLT11 invoices |
+| `lnrpc.Lightning/ChannelBalance` | Check spending balance |
+| `lnrpc.Lightning/ListPayments` | View payment history |
+| `lnrpc.Lightning/GetInfo` | Node health check |
+| `lnrpc.Lightning/AddInvoice` | Create invoices to receive |
 
-Recovery: passkey syncs via iCloud/Google → same entropy → same keys → wallet restored.
+Plus a litd account caveat (`lnd-custom account <id>`) that enforces the budget ceiling.
 
-### Passkey Roles Per Layer
-
-| Layer | Passkey Role | What It Does |
-|-------|-------------|-------------|
-| L1 (Funding) | **Key + Signer** | Derives private key via PRF, signs on-chain txs in browser |
-| L2 (Spending) | **Auth only** | Authenticates to backend via WebAuthn. LND holds Lightning signing keys. |
-
-### Macaroon-Scoped Agent
-
-The agent holds a litd account macaroon (via MCP server — never directly) with these permissions:
-
-| Allowed | Denied |
-|---------|--------|
-| `offchain:write` — pay Lightning invoices | `onchain:*` — no on-chain access |
-| `offchain:read` — view own payments | `peers:*` — no node topology access |
-| `invoices:write` — create invoices | `macaroon:*` — cannot bake new tokens |
-| `invoices:read` — check invoice status | Cannot see real node balance or channels |
-
----
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, coding standards, and pull request guidelines.
+**Denied:** all on-chain operations, channel management, peer discovery, macaroon baking.
 
 ---
 
 ## Security
 
-Funding wallet signing keys are derived client-side and never leave the browser. On L2, the passkey authenticates but does not sign — LND holds those keys. See [SECURITY.md](SECURITY.md) for the full security model and responsible disclosure policy.
+- L1 signing keys derived client-side via WebAuthn PRF — never sent to the server
+- L2 macaroon is a scoped bearer token, not a signing key — LND holds Lightning keys
+- Budget enforcement is cryptographic (LND RPC middleware), not application logic
+- Agent cannot access L1 funds, see node topology, or escalate its own permissions
+- Revoking an agent deletes the litd account — macaroon dies instantly
+
+See [SECURITY.md](SECURITY.md) for the full security model.
 
 ---
 
@@ -271,11 +257,10 @@ Funding wallet signing keys are derived client-side and never leave the browser.
 
 ## References
 
-- [WebAuthn PRF Extension](https://developers.yubico.com/WebAuthn/Concepts/PRF_Extension/) — Passkey-based key derivation
-- [LND Macaroons](https://docs.lightning.engineering/lightning-network-tools/lnd/macaroons) — Scoped authentication tokens
-- [litd Accounts](https://docs.lightning.engineering/lightning-network-tools/lightning-terminal/accounts) — Virtual Lightning accounts
+- [Lightning Agent Tools](https://github.com/lightninglabs/lightning-agent-tools) — lnget, macaroon-bakery, commerce skills
 - [L402 for Agents](https://lightning.engineering/posts/2026-03-11-L402-for-agents/) — Agent payment protocol
-- [Lightning Agent Tools](https://github.com/lightninglabs/lightning-agent-tools) — Claude Code skills for Lightning
+- [litd Accounts](https://docs.lightning.engineering/lightning-network-tools/lightning-terminal/accounts) — Virtual Lightning accounts
+- [LND Macaroons](https://docs.lightning.engineering/lightning-network-tools/lnd/macaroons) — Scoped authentication tokens
 - [MCP Protocol](https://modelcontextprotocol.io/) — Model Context Protocol
-- [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) — MCP SDK
-- [Passkey PRF Spec (Breez)](https://github.com/breez/passkey-login/blob/main/spec.md) — Reference implementation
+- [WebAuthn PRF](https://developers.yubico.com/WebAuthn/Concepts/PRF_Extension/) — Passkey-based key derivation
+- [402index](https://402index.com) — Directory of L402-enabled APIs

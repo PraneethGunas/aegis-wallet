@@ -7,7 +7,6 @@ import {
   authenticatedLndGrpc,
   getWalletInfo,
   getChannelBalance,
-  pay,
   createInvoice,
   getPayments,
   decodePaymentRequest,
@@ -53,18 +52,36 @@ export async function getBalance() {
 
 export async function sendPayment(bolt11) {
   try {
-    const result = await pay({ lnd: getLnd(), request: bolt11 });
+    // Use SendPaymentSync (unary RPC) instead of ln-service's pay() which uses
+    // Router/SendPaymentV2 (streaming). The litd account middleware cannot handle
+    // streaming RPCs — it breaks request/response matching and returns
+    // "no request values found for request" errors.
+    const lnd = getLnd();
+    const result = await new Promise((resolve, reject) => {
+      lnd.default.sendPaymentSync({ payment_request: bolt11 }, (err, res) => {
+        if (err) reject(err);
+        else resolve(res);
+      });
+    });
+
+    if (result.payment_error) {
+      const lower = result.payment_error.toLowerCase();
+      const budgetExceeded = lower.includes("insufficient") || lower.includes("account") || lower.includes("budget");
+      return { success: false, error: result.payment_error, budget_exceeded: budgetExceeded };
+    }
+
+    const preimage = Buffer.from(result.payment_preimage).toString("hex");
+    const route = result.payment_route;
     const { balance_sats } = await getBalance();
     return {
       success: true,
-      amount_sats: result.tokens,
-      fee_sats: result.fee,
-      preimage: result.secret,
+      amount_sats: Number(route?.total_amt || 0),
+      fee_sats: Number(route?.total_fees || 0),
+      preimage,
       balance_remaining_sats: balance_sats,
     };
   } catch (err) {
-    // ln-service rejects with arrays: [code, message, {err}] — not Error objects
-    const errMsg = err.message
+    const errMsg = err.details || err.message
       || (Array.isArray(err) ? (err[2]?.err?.details || err[1] || JSON.stringify(err)) : String(err));
     const lower = errMsg.toLowerCase();
     const budgetExceeded = lower.includes("insufficient") || lower.includes("account") || lower.includes("budget");

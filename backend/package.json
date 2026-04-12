@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "mcp": "node src/mcp/server.js",
-    "dev": "node src/server.js",
+    "dev": "node --watch src/server.js",
     "test:tools": "node src/mcp/test-client.js",
     "test:auth": "node src/mcp/test-auth.js",
     "test:ws": "node src/ws/test-ws.js",
