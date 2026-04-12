@@ -7,7 +7,7 @@ import * as api from "@/lib/api";
 
 const spring = { type: "spring", stiffness: 300, damping: 24 };
 
-export default function AgentSetup({ onPaired, btcPrice = 100000 }) {
+export default function AgentSetup({ onPaired, btcPrice = 100000, credentialId = "default" }) {
   const [budgetUsd, setBudgetUsd] = useState("10");
   const [thresholdUsd, setThresholdUsd] = useState("2.50");
   const [creating, setCreating] = useState(false);
@@ -95,7 +95,7 @@ You're connected and ready. What would you like me to help you with?`;
       mcpServers: {
         "aegis-wallet": {
           command: "node",
-          args: [MCP_SERVER_PATH, "--macaroon", credential.macaroon],
+          args: [MCP_SERVER_PATH, "--macaroon", credential.macaroon, "--user", credentialId],
         },
         "402index": {
           command: "mcp-server",
@@ -137,7 +137,7 @@ ${JSON.stringify({
   mcpServers: {
     "aegis-wallet": {
       command: "node",
-      args: [MCP_SERVER_PATH, "--macaroon", credential.macaroon],
+      args: [MCP_SERVER_PATH, "--macaroon", credential.macaroon, "--user", credentialId],
     },
     "402index": {
       command: "mcp-server",

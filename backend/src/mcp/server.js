@@ -7,14 +7,16 @@ import { validateAgent } from "./auth.js";
 const args = process.argv.slice(2);
 const macIndex = args.indexOf("--macaroon");
 const macaroon = macIndex !== -1 ? args[macIndex + 1] : null;
+const userIndex = args.indexOf("--user");
+const userId = userIndex !== -1 ? args[userIndex + 1] : "default";
 
-// Build agent context from the macaroon — no DB lookup needed
+// Build agent context from the macaroon
 const agentContext = {
-  macaroon,              // base64 litd account macaroon — used for all LND gRPC calls
-  macaroon_encrypted: macaroon,  // alias for tools.js compatibility
-  id: "direct",          // no DB agent ID — macaroon is the identity
-  user_credential_id: null,
-  budget_sats: 0,        // real budget is in the macaroon (litd enforces)
+  macaroon,
+  macaroon_encrypted: macaroon,
+  id: macaroon ? macaroon.slice(0, 16) : "none",
+  user_credential_id: userId,  // needed for WebSocket approval notifications
+  budget_sats: 0,
   status: "active",
 };
 

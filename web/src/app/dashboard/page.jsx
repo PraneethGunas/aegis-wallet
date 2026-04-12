@@ -19,7 +19,7 @@ const spring = { type: "spring", stiffness: 300, damping: 24 };
 
 export default function Dashboard() {
   const {
-    balance, btcPrice, transactions, agent, fundingAddress, loading,
+    balance, btcPrice, transactions, agent, fundingAddress, loading, credentialId,
     pendingApproval, fetchBalance, fetchTransactions, fetchAgentStatus,
     approveRequest, denyRequest, pauseAgent, resumeAgent,
   } = useWallet();
@@ -344,7 +344,7 @@ export default function Dashboard() {
           <p className="text-xs text-muted-foreground mb-3">Spending policy</p>
 
           {!agent.isPaired ? (
-            <AgentSetup onPaired={fetchAgentStatus} btcPrice={btcPrice} />
+            <AgentSetup onPaired={fetchAgentStatus} btcPrice={btcPrice} credentialId={credentialId} />
           ) : (
             <div className="p-5 rounded-xl glass border border-border/50 space-y-5">
               {/* Header */}
