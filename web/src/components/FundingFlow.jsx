@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Copy, Check, X, RefreshCw } from "lucide-react";
+import { Copy, Check, X, RefreshCw, Fingerprint } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { QRCodeSVG } from "qrcode.react";
-import { getNextFundingAddress } from "@/lib/bitcoin";
+import { getNextFundingAddress, isKeysLoaded } from "@/lib/bitcoin";
 
 export default function FundingFlow({ isOpen, onClose, fundingAddress }) {
   const [copied, setCopied] = useState(false);
@@ -23,12 +23,15 @@ export default function FundingFlow({ isOpen, onClose, fundingAddress }) {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const [needsAuth, setNeedsAuth] = useState(false);
+
   const handleNewAddress = () => {
     try {
       const { address } = getNextFundingAddress();
       setDisplayAddress(address);
+      setNeedsAuth(false);
     } catch {
-      // Keys not loaded — can't derive
+      setNeedsAuth(true);
     }
   };
 
@@ -74,6 +77,11 @@ export default function FundingFlow({ isOpen, onClose, fundingAddress }) {
                       new address
                     </button>
                   </div>
+                  {needsAuth && (
+                    <p className="text-[11px] text-amber-500 mt-1">
+                      Re-authenticate to generate a new address
+                    </p>
+                  )}
                 </>
               ) : (
                 <p className="text-sm text-muted-foreground py-4">Authenticate to view address</p>

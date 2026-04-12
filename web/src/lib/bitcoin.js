@@ -213,6 +213,13 @@ export function createFundLNTransaction(
 }
 
 /**
+ * Check if keys are currently loaded in memory.
+ */
+export function isKeysLoaded() {
+  return _root !== null;
+}
+
+/**
  * Zero out all key material from memory.
  * Call this when the user navigates away or the session ends.
  */
