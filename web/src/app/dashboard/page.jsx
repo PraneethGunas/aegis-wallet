@@ -21,7 +21,7 @@ export default function Dashboard() {
   const {
     balance, btcPrice, transactions, agent, fundingAddress, loading, credentialId,
     pendingApproval, fetchBalance, fetchTransactions, fetchAgentStatus,
-    approveRequest, denyRequest, pauseAgent, resumeAgent,
+    approveRequest, denyRequest, dismissApproval, payDirect, pauseAgent, resumeAgent,
   } = useWallet();
 
   const [showFunding, setShowFunding] = useState(false);
@@ -94,8 +94,20 @@ export default function Dashboard() {
       <ApprovalBanner
         approval={pendingApproval}
         btcPrice={btcPrice}
-        onApprove={() => approveRequest(pendingApproval?.approvalId)}
-        onDeny={() => denyRequest(pendingApproval?.approvalId)}
+        onApprove={() => {
+          if (pendingApproval?.type === "payment") {
+            payDirect(pendingApproval.bolt11);
+          } else {
+            approveRequest(pendingApproval?.approvalId);
+          }
+        }}
+        onDeny={() => {
+          if (pendingApproval?.type === "payment") {
+            dismissApproval();
+          } else {
+            denyRequest(pendingApproval?.approvalId);
+          }
+        }}
       />
 
       <div className="max-w-2xl mx-auto px-6 md:px-10 pt-10 md:pt-14">

@@ -161,6 +161,12 @@ export const agent = {
       body: JSON.stringify({ budgetSats }),
     }),
 
+  payDirect: (bolt11) =>
+    request("/agent/pay-direct", {
+      method: "POST",
+      body: JSON.stringify({ bolt11 }),
+    }),
+
   revoke: () =>
     request("/agent/revoke", { method: "POST" }),
 };

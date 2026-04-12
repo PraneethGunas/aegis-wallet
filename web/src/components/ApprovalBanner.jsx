@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, Fingerprint, ArrowUp, Clock } from "lucide-react";
+import { Bot, Fingerprint, ArrowUp, Clock, Zap } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useState, useEffect } from "react";
 
@@ -24,6 +24,7 @@ export default function ApprovalBanner({ approval, onApprove, onDeny, btcPrice =
 
   const amountUsd = ((approval.amountSats / 1e8) * btcPrice).toFixed(2);
   const isTopup = approval.type === "topup";
+  const isPayment = approval.type === "payment";
   const mins = timeLeft ? Math.floor(timeLeft / 60) : 0;
   const secs = timeLeft ? timeLeft % 60 : 0;
 
@@ -40,13 +41,13 @@ export default function ApprovalBanner({ approval, onApprove, onDeny, btcPrice =
           <div className="rounded-2xl glass-strong border border-primary/20 p-5 glow-orange">
             <div className="flex items-center gap-4">
               <div className="w-10 h-10 rounded-lg bg-secondary/10 flex items-center justify-center flex-shrink-0">
-                {isTopup ? <ArrowUp className="w-5 h-5 text-secondary" /> : <Bot className="w-5 h-5 text-secondary" />}
+                {isTopup ? <ArrowUp className="w-5 h-5 text-secondary" /> : isPayment ? <Zap className="w-5 h-5 text-secondary" /> : <Bot className="w-5 h-5 text-secondary" />}
               </div>
 
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
                   <p className="text-sm font-medium truncate">
-                    {isTopup ? "Budget top-up" : "Payment request"}
+                    {isTopup ? "Budget top-up" : isPayment ? "Budget exceeded" : "Payment request"}
                   </p>
                   {timeLeft !== null && timeLeft > 0 && (
                     <span className="pill bg-amber-500/15 text-amber-400">
@@ -79,8 +80,8 @@ export default function ApprovalBanner({ approval, onApprove, onDeny, btcPrice =
                       onClick={onApprove}
                       className="px-4 py-2 rounded-lg bg-success-green text-white text-xs font-medium flex items-center gap-1.5"
                     >
-                      <Fingerprint className="w-3.5 h-3.5" />
-                      Approve
+                      {isPayment ? <Zap className="w-3.5 h-3.5" /> : <Fingerprint className="w-3.5 h-3.5" />}
+                      {isPayment ? "Pay directly" : "Approve"}
                     </motion.button>
                   </div>
                 </div>

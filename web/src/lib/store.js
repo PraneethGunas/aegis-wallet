@@ -353,6 +353,24 @@ export function WalletProvider({ children }) {
     []
   );
 
+  const dismissApproval = useCallback(() => {
+    dispatch({ type: "CLEAR_PENDING_APPROVAL" });
+  }, []);
+
+  const payDirect = useCallback(
+    async (bolt11) => {
+      try {
+        await api.agent.payDirect(bolt11);
+        dispatch({ type: "CLEAR_PENDING_APPROVAL" });
+        fetchBalance();
+        fetchTransactions();
+      } catch (err) {
+        dispatch({ type: "SET_ERROR", error: err.message });
+      }
+    },
+    [fetchBalance, fetchTransactions]
+  );
+
   const pauseAgent = useCallback(async () => {
     try {
       await api.agent.pause();
@@ -473,6 +491,25 @@ export function WalletProvider({ children }) {
         fetchBalance();
       }),
 
+      ws.on("payment_failed", (data) => {
+        dispatch({
+          type: "SET_PENDING_APPROVAL",
+          approval: {
+            type: "payment",
+            bolt11: data.bolt11,
+            amountSats: data.amount_sats,
+            reason: data.purpose || data.description || "Agent's budget exceeded",
+            expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+          },
+        });
+      }),
+
+      ws.on("payment_completed", () => {
+        dispatch({ type: "CLEAR_PENDING_APPROVAL" });
+        fetchBalance();
+        fetchTransactions();
+      }),
+
       ws.on("topup_requested", (data) => {
         dispatch({
           type: "SET_PENDING_APPROVAL",
@@ -580,6 +617,8 @@ export function WalletProvider({ children }) {
     fetchAgentStatus,
     approveRequest,
     denyRequest,
+    dismissApproval,
+    payDirect,
     pauseAgent,
     resumeAgent,
     fundAgent,
