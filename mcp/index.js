@@ -2,17 +2,17 @@
 /**
  * Aegis Wallet MCP Server
  *
- * Bitcoin Lightning wallet tools for AI agents.
- * Budget enforced cryptographically via LND macaroons.
+ * Thin bridge between Claude and LND.
+ * Budget enforced by the macaroon (LND layer).
+ * Policy (thresholds, approvals) handled by the web app.
  *
  * Usage:
- *   aegis-wallet --macaroon <base64_macaroon> [--user <id>] [--threshold <sats>]
+ *   aegis-wallet --macaroon <base64_macaroon>
  *
  * Environment:
  *   LND_CERT_PATH     — path to tls.cert (default: ~/.lnd/tls.cert)
  *   LND_CERT_BASE64   — base64 encoded TLS cert (overrides path)
  *   LND_SOCKET        — gRPC address (default: localhost:10009)
- *   PORT              — backend port for WS notifications (default: 3001)
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -22,41 +22,28 @@ import { initLnd } from "./lnd.js";
 
 // ── Parse CLI args ──────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
-
-function getArg(name) {
-  const i = args.indexOf(`--${name}`);
-  return i !== -1 ? args[i + 1] : null;
-}
-
-const macaroon = getArg("macaroon");
-const userId = getArg("user") || "default";
-const threshold = parseInt(getArg("threshold") || "0") || 15000;
+const macIndex = args.indexOf("--macaroon");
+const macaroon = macIndex !== -1 ? args[macIndex + 1] : null;
 
 if (!macaroon) {
   process.stderr.write(`
 aegis-wallet — Bitcoin Lightning wallet MCP server
 
 Usage:
-  aegis-wallet --macaroon <base64_macaroon> [options]
-
-Options:
-  --macaroon <mac>     Scoped LND macaroon (required, base64)
-  --user <id>          User credential ID for approval notifications
-  --threshold <sats>   Auto-approve threshold in sats (default: 15000)
+  aegis-wallet --macaroon <base64_macaroon>
 
 Environment:
   LND_CERT_PATH        Path to tls.cert (default: ~/.lnd/tls.cert)
   LND_CERT_BASE64      Base64 TLS cert (overrides path)
   LND_SOCKET           gRPC address (default: localhost:10009)
 
-Example:
-  aegis-wallet --macaroon AgEDbG5k... --threshold 5000
+The macaroon controls your budget. LND enforces it cryptographically.
 
 `);
   process.exit(1);
 }
 
-// ── Initialize LND connection ───────────────────────────────────────────────
+// ── Initialize LND ──────────────────────────────────────────────────────────
 try {
   initLnd(macaroon);
 } catch (err) {
@@ -65,56 +52,27 @@ try {
 }
 
 // ── Agent context ───────────────────────────────────────────────────────────
-const agentContext = {
-  macaroon,
-  macaroon_encrypted: macaroon,
-  id: macaroon.slice(0, 16),
-  user_credential_id: userId,
-  budget_sats: 0,
-  status: "active",
-  auto_pay_threshold_sats: threshold,
-};
+const agentContext = { macaroon };
 
 function getAgentContext() {
   return validateAgent(agentContext);
 }
 
-// ── Create MCP server ───────────────────────────────────────────────────────
+// ── Server ──────────────────────────────────────────────────────────────────
 const server = new McpServer({
   name: "aegis-wallet",
   version: "0.1.0",
-  description: "Bitcoin Lightning wallet — cryptographic budget enforcement via macaroons",
+  description: "Bitcoin Lightning wallet — pay invoices within your macaroon-enforced budget",
 });
 
-// ── Ping ─────────────────────────────────────────────────────────────────────
 server.tool("ping", "Health check", {}, async () => ({
   content: [{
     type: "text",
-    text: JSON.stringify({
-      status: "ok",
-      server: "aegis-wallet",
-      version: "0.1.0",
-      has_macaroon: true,
-      threshold_sats: threshold,
-      timestamp: new Date().toISOString(),
-    }),
+    text: JSON.stringify({ status: "ok", server: "aegis-wallet", version: "0.1.0", timestamp: new Date().toISOString() }),
   }],
 }));
 
-// ── WebSocket emitter ────────────────────────────────────────────────────────
-async function emitToUser(credentialId, event, data) {
-  try {
-    const port = process.env.PORT || 3001;
-    await fetch(`http://localhost:${port}/dev/emit`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ credential_id: credentialId, event, data }),
-    });
-  } catch {}
-}
-
-// ── Register tools + start ───────────────────────────────────────────────────
-registerTools(server, getAgentContext, { emitToUser });
+registerTools(server, getAgentContext, {});
 
 const transport = new StdioServerTransport();
 server.connect(transport).catch((err) => {
