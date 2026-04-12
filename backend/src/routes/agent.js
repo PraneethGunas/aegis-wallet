@@ -6,7 +6,7 @@ import { Router } from "express";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import * as litd from "../services/litd.js";
-import { bakeAgentMacaroon } from "../services/lnd.js";
+import { bakeAgentMacaroon, sendPayment as lndSendPayment } from "../services/lnd.js";
 import * as db from "../db/index.js";
 import { emitToUser } from "../ws/notifications.js";
 
@@ -161,6 +161,34 @@ router.post("/approve", auth, async (req, res, next) => {
     });
 
     res.json({ ok: true, status });
+  } catch (err) { next(err); }
+});
+
+// ── Pay directly (user pays invoice when agent budget exceeded) ─────────────
+router.post("/pay-direct", auth, async (req, res, next) => {
+  try {
+    const { bolt11 } = req.body;
+    if (!bolt11) return res.status(400).json({ error: "bolt11 required" });
+
+    // Pay using admin macaroon — this is the USER paying, not the agent
+    const result = await lndSendPayment(bolt11);
+    if (!result.success) {
+      return res.status(400).json({ error: `Payment failed: ${result.error}` });
+    }
+
+    emitToUser(req.user.credentialId, "payment_completed", {
+      amount_sats: result.amount_sats,
+      fee_sats: result.fee_sats,
+      preimage: result.preimage,
+    });
+
+    res.json({
+      ok: true,
+      amount_sats: result.amount_sats,
+      fee_sats: result.fee_sats,
+      preimage: result.preimage,
+      balance_remaining_sats: result.balance_remaining_sats,
+    });
   } catch (err) { next(err); }
 });
 
