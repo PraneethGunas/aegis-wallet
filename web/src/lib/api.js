@@ -154,6 +154,15 @@ export const agent = {
       method: "PUT",
       body: JSON.stringify({ limitSats }),
     }),
+
+  updateBudget: (budgetSats) =>
+    request("/agent/budget", {
+      method: "PUT",
+      body: JSON.stringify({ budgetSats }),
+    }),
+
+  revoke: () =>
+    request("/agent/revoke", { method: "POST" }),
 };
 
 // Lightning endpoints

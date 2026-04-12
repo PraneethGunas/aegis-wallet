@@ -199,4 +199,45 @@ router.put("/auto-pay-limit", auth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── Update budget (litd account balance) ────────────────────────────────────
+// Changes the cryptographically-enforced budget ceiling.
+// Same macaroon, updated balance — LND checks litd account on each payment.
+router.put("/budget", auth, async (req, res, next) => {
+  try {
+    const { budgetSats } = req.body;
+    if (!budgetSats || budgetSats < 0) {
+      return res.status(400).json({ error: "budgetSats required (positive integer)" });
+    }
+
+    const agent = getUserAgent(req.user.credentialId);
+    if (!agent) return res.status(404).json({ error: "No agent found" });
+
+    // Update litd account — this is the real enforcement
+    const result = await litd.updateBalance(agent.litd_account_id, budgetSats);
+
+    // Update DB for display
+    db.default.prepare("UPDATE agents SET budget_sats = ? WHERE id = ?").run(budgetSats, agent.id);
+
+    res.json({
+      ok: true,
+      budgetSats: result.balance_sats,
+      message: "Budget updated. Same macaroon, new limit — enforced by LND.",
+    });
+  } catch (err) { next(err); }
+});
+
+// ── Revoke agent (delete litd account — macaroon becomes invalid) ───────────
+router.post("/revoke", auth, async (req, res, next) => {
+  try {
+    const agent = getUserAgent(req.user.credentialId);
+    if (!agent) return res.status(404).json({ error: "No agent found" });
+
+    // Delete litd account — any macaroon tied to it instantly stops working
+    await litd.freezeAccount(agent.litd_account_id);
+    db.updateAgentStatus(agent.id, "paused");
+
+    res.json({ ok: true, message: "Agent revoked. Macaroon is now invalid." });
+  } catch (err) { next(err); }
+});
+
 export default router;

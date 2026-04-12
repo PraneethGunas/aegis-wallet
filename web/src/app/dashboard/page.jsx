@@ -429,6 +429,42 @@ export default function Dashboard() {
                   <span>$50</span>
                 </div>
               </div>
+
+              {/* Budget adjustment */}
+              <div className="flex gap-2">
+                {[5, 10, 20].map((usd) => {
+                  const sats = Math.round((usd / btcPrice) * 1e8);
+                  return (
+                    <motion.button
+                      key={usd}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={async () => {
+                        try {
+                          await api.agent.updateBudget(sats);
+                          fetchAgentStatus();
+                          fetchBalance();
+                        } catch {}
+                      }}
+                      className="flex-1 py-2 rounded-lg glass border border-border/50 font-mono text-xs text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      Set ${usd}
+                    </motion.button>
+                  );
+                })}
+              </div>
+
+              {/* Revoke */}
+              <button
+                onClick={async () => {
+                  try {
+                    await api.agent.revoke();
+                    fetchAgentStatus();
+                  } catch {}
+                }}
+                className="text-xs text-destructive/60 hover:text-destructive transition-colors"
+              >
+                Revoke agent access
+              </button>
             </div>
           )}
         </motion.div>
