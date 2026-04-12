@@ -12,6 +12,90 @@ import { motion, AnimatePresence } from "motion/react";
 import { useWallet } from "@/lib/store";
 import { hasExistingWallet } from "@/lib/passkey";
 
+/* ─── Illustration: Hero / Welcome ─── */
+function IllustrationHero() {
+  return (
+    <div className="relative w-72 h-64 mx-auto flex items-center justify-center">
+      {/* Shield with lightning bolt */}
+      <motion.div
+        initial={{ opacity: 0, scale: 0.6 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ delay: 0.1, duration: 0.5, type: "spring", stiffness: 180 }}
+        className="relative"
+      >
+        <svg width="140" height="160" viewBox="0 0 140 160" fill="none">
+          {/* Shield outline */}
+          <motion.path
+            d="M70 8L16 36v44c0 36 23 68 54 80 31-12 54-44 54-80V36L70 8z"
+            stroke="#D4760A"
+            strokeWidth="3"
+            fill="none"
+            initial={{ pathLength: 0 }}
+            animate={{ pathLength: 1 }}
+            transition={{ delay: 0.2, duration: 1, ease: "easeOut" }}
+          />
+          {/* Shield fill */}
+          <motion.path
+            d="M70 8L16 36v44c0 36 23 68 54 80 31-12 54-44 54-80V36L70 8z"
+            fill="#D4760A"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 0.08 }}
+            transition={{ delay: 0.8, duration: 0.5 }}
+          />
+          {/* Lightning bolt */}
+          <motion.path
+            d="M78 52L58 88h18l-6 24 24-40H76l2-20z"
+            fill="#D4760A"
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.6, duration: 0.4 }}
+          />
+        </svg>
+      </motion.div>
+
+      {/* Floating elements */}
+      <motion.div
+        initial={{ opacity: 0, x: -20 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ delay: 0.8, duration: 0.4 }}
+        className="absolute top-6 left-2"
+      >
+        <div className="w-10 h-10 rounded-xl bg-white border border-border/50 shadow-sm flex items-center justify-center">
+          <Fingerprint className="w-5 h-5 text-primary/70" strokeWidth={1.5} />
+        </div>
+      </motion.div>
+
+      <motion.div
+        initial={{ opacity: 0, x: 20 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ delay: 0.9, duration: 0.4 }}
+        className="absolute top-8 right-2"
+      >
+        <div className="w-10 h-10 rounded-xl bg-white border border-border/50 shadow-sm flex items-center justify-center">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+            <rect x="3" y="5" width="12" height="9" rx="2" fill="none" stroke="#2563EB" strokeWidth="1.5" />
+            <circle cx="9" cy="9.5" r="1.5" fill="#2563EB" />
+            <rect x="6" y="3" width="6" height="3" rx="1" fill="none" stroke="#2563EB" strokeWidth="1" opacity="0.5" />
+          </svg>
+        </div>
+      </motion.div>
+
+      <motion.div
+        initial={{ opacity: 0, y: 15 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 1, duration: 0.4 }}
+        className="absolute bottom-2 right-6"
+      >
+        <div className="w-10 h-10 rounded-xl bg-white border border-border/50 shadow-sm flex items-center justify-center">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+            <path d="M10 3L5 10h4l-1 5 5-7H9l1-5z" fill="#D4760A" />
+          </svg>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 /* ─── Illustration: Two Layers ─── */
 function IllustrationLayers() {
   return (
@@ -267,6 +351,13 @@ function IllustrationReady() {
 
 /* ─── Slide Data ─── */
 const slides = [
+  {
+    id: "hero",
+    Illustration: IllustrationHero,
+    title: "Agentic Bitcoin payments, secured by you",
+    description:
+      "Seedless wallet. Biometric security. AI-managed Lightning payments — all within budgets you control.",
+  },
   {
     id: "layers",
     Illustration: IllustrationLayers,
