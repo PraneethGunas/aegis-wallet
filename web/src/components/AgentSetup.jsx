@@ -139,8 +139,8 @@ Paste this into Claude Desktop → Settings → Developer → Edit Config:
 ${JSON.stringify({
   mcpServers: {
     "aegis-wallet": {
-      command: "node",
-      args: [MCP_SERVER_PATH, "--macaroon", credential.macaroon, "--user", credentialId],
+      command: "npx",
+      args: ["-y", MCP_SERVER_PATH, "--macaroon", credential.macaroon, "--user", credentialId, "--threshold", String(thresholdSats)],
     },
     "402index": {
       command: "mcp-server",
