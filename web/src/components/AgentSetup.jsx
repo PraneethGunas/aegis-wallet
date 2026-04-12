@@ -8,7 +8,7 @@ import * as api from "@/lib/api";
 const spring = { type: "spring", stiffness: 300, damping: 24 };
 
 export default function AgentSetup({ onPaired, btcPrice = 100000, credentialId = "default" }) {
-  const [budgetUsd, setBudgetUsd] = useState("10");
+  const [budgetUsd, setBudgetUsd] = useState("2.50");
   const [creating, setCreating] = useState(false);
   const [credential, setCredential] = useState(null);
   const [copied, setCopied] = useState(false);
@@ -151,16 +151,16 @@ ${generatePrompt()}`;
         </div>
         <input
           type="range"
-          min="1"
-          max="50"
-          step="1"
+          min="0.01"
+          max="5"
+          step="0.01"
           value={budgetUsd}
           onChange={(e) => setBudgetUsd(e.target.value)}
           className="w-full"
         />
         <div className="flex justify-between font-mono text-[10px] text-muted-foreground mt-1">
-          <span>$1</span>
-          <span>$50</span>
+          <span>1 sat</span>
+          <span>$5</span>
         </div>
       </div>
 
