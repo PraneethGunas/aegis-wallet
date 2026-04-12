@@ -1,15 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Fingerprint, Shield, Zap, Loader2 } from "lucide-react";
 import { motion } from "motion/react";
 import { useWallet } from "@/lib/store";
+import { hasExistingWallet } from "@/lib/passkey";
 
 export default function Welcome() {
   const router = useRouter();
   const { createWallet, authenticate, error } = useWallet();
   const [loading, setLoading] = useState(null);
+  const [walletExists, setWalletExists] = useState(false);
+
+  useEffect(() => {
+    setWalletExists(hasExistingWallet());
+  }, []);
 
   const handleCreateWallet = async () => {
     setLoading("create");
@@ -80,37 +86,50 @@ export default function Welcome() {
             </motion.div>
           )}
 
-          {/* CTAs */}
+          {/* CTAs — show "Open Wallet" as primary if credential exists */}
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.45 }}
             className="flex items-center gap-5 mb-20"
           >
-            <motion.button
-              whileHover={{ scale: 1.03 }}
-              whileTap={{ scale: 0.97 }}
-              transition={{ type: "spring", stiffness: 400, damping: 17 }}
-              onClick={handleCreateWallet}
-              disabled={!!loading}
-              className="px-7 py-3.5 rounded-xl bg-primary text-primary-foreground text-[15px] font-medium flex items-center gap-2.5 disabled:opacity-60 glow-orange"
-            >
-              {loading === "create" ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Fingerprint className="w-4 h-4" />
-              )}
-              {loading === "create" ? "Creating..." : "Create Wallet"}
-            </motion.button>
-
-            <button
-              onClick={handleOpenWallet}
-              disabled={!!loading}
-              className="text-[15px] text-muted-foreground hover:text-foreground transition-colors disabled:opacity-60 flex items-center gap-2"
-            >
-              {loading === "open" && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-              {loading === "open" ? "Authenticating..." : "Open existing wallet"}
-            </button>
+            {walletExists ? (
+              <>
+                <motion.button
+                  whileHover={{ scale: 1.03 }}
+                  whileTap={{ scale: 0.97 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 17 }}
+                  onClick={handleOpenWallet}
+                  disabled={!!loading}
+                  className="px-7 py-3.5 rounded-xl bg-primary text-primary-foreground text-[15px] font-medium flex items-center gap-2.5 disabled:opacity-60 glow-orange"
+                >
+                  {loading === "open" ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Fingerprint className="w-4 h-4" />
+                  )}
+                  {loading === "open" ? "Authenticating..." : "Open Wallet"}
+                </motion.button>
+              </>
+            ) : (
+              <>
+                <motion.button
+                  whileHover={{ scale: 1.03 }}
+                  whileTap={{ scale: 0.97 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 17 }}
+                  onClick={handleCreateWallet}
+                  disabled={!!loading}
+                  className="px-7 py-3.5 rounded-xl bg-primary text-primary-foreground text-[15px] font-medium flex items-center gap-2.5 disabled:opacity-60 glow-orange"
+                >
+                  {loading === "create" ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Fingerprint className="w-4 h-4" />
+                  )}
+                  {loading === "create" ? "Creating..." : "Create Wallet"}
+                </motion.button>
+              </>
+            )}
           </motion.div>
 
           {/* Steps */}
