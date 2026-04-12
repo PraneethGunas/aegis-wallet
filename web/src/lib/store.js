@@ -35,7 +35,7 @@ const initialState = {
   },
 
   // BTC price
-  btcPrice: 62850, // fallback
+  btcPrice: 0, // fetched from CoinGecko on mount
 
   // Agent
   agent: {

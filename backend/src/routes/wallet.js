@@ -10,6 +10,26 @@ import * as lnd from "../services/lnd.js";
 import * as mempool from "../services/mempool.js";
 import * as db from "../db/index.js";
 
+// BTC price cache — avoids CoinGecko rate limits and timeouts
+let priceCache = { usd: 0, fetchedAt: 0 };
+async function getBtcPrice() {
+  if (Date.now() - priceCache.fetchedAt < 30_000 && priceCache.usd > 0) {
+    return priceCache.usd;
+  }
+  try {
+    const res = await fetch(
+      "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd",
+      { signal: AbortSignal.timeout(5000) }
+    );
+    const data = await res.json();
+    if (data?.bitcoin?.usd) {
+      priceCache = { usd: data.bitcoin.usd, fetchedAt: Date.now() };
+      return data.bitcoin.usd;
+    }
+  } catch {}
+  return priceCache.usd || 0;
+}
+
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || "aegis-dev-secret";
 
@@ -83,20 +103,12 @@ router.get("/balance", auth, async (req, res, next) => {
       }
     }
 
-    const [l2Result, priceResult] = await Promise.allSettled([
-      lnd.getBalance(),
-      fetch("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd", {
-        signal: AbortSignal.timeout(3000),
-      }).then((r) => r.json()),
+    const [l2Result, btcPrice] = await Promise.all([
+      lnd.getBalance().catch(() => ({ balance_sats: 0 })),
+      getBtcPrice(),
     ]);
 
-    const l2Sats = l2Result.status === "fulfilled"
-      ? parseInt(l2Result.value.balance_sats || "0") : 0;
-
-    let btcPrice = 100000;
-    if (priceResult.status === "fulfilled" && priceResult.value?.bitcoin?.usd) {
-      btcPrice = priceResult.value.bitcoin.usd;
-    }
+    const l2Sats = parseInt(l2Result.balance_sats || "0");
 
     const totalSats = l1Sats + l2Sats;
     res.json({
