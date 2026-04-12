@@ -63,9 +63,12 @@ export async function sendPayment(bolt11) {
       balance_remaining_sats: balance_sats,
     };
   } catch (err) {
-    const msg = (err.message || "").toLowerCase();
-    const budgetExceeded = msg.includes("insufficient") || msg.includes("account") || msg.includes("budget");
-    return { success: false, error: err.message, budget_exceeded: budgetExceeded };
+    // ln-service rejects with arrays: [code, message, {err}] — not Error objects
+    const errMsg = err.message
+      || (Array.isArray(err) ? (err[2]?.err?.details || err[1] || JSON.stringify(err)) : String(err));
+    const lower = errMsg.toLowerCase();
+    const budgetExceeded = lower.includes("insufficient") || lower.includes("account") || lower.includes("budget");
+    return { success: false, error: errMsg, budget_exceeded: budgetExceeded };
   }
 }
 
