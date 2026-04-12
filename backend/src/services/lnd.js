@@ -278,14 +278,21 @@ export async function pendingChannels() {
  */
 export async function bakeAgentMacaroon(accountId) {
   // 1. Bake macaroon with minimal permissions
+  // ln-service's pay() uses routerrpc.Router/SendPaymentV2 (streaming),
+  // NOT lnrpc.Lightning/SendPaymentSync (legacy sync).
+  // Also needs TrackPaymentV2 for payment tracking and QueryRoutes for pathfinding.
   const { macaroon: minimalB64 } = await grantAccess({
     lnd,
     permissions: [
-      "uri:/lnrpc.Lightning/SendPaymentSync",
+      "uri:/routerrpc.Router/SendPaymentV2",
+      "uri:/routerrpc.Router/TrackPaymentV2",
+      "uri:/lnrpc.Lightning/SendPaymentSync",   // fallback if router unavailable
       "uri:/lnrpc.Lightning/DecodePayReq",
       "uri:/lnrpc.Lightning/ChannelBalance",
       "uri:/lnrpc.Lightning/ListPayments",
       "uri:/lnrpc.Lightning/GetInfo",
+      "uri:/lnrpc.Lightning/AddInvoice",         // create_invoice tool
+      "uri:/invoicesrpc.Invoices/AddHoldInvoice", // hold invoices if needed
     ],
   });
 
