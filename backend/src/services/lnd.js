@@ -5,7 +5,7 @@
 import { readFileSync } from "fs";
 import https from "https";
 
-const LITD_HOST = process.env.LITD_HOST || "https://localhost:8443";
+const LITD_HOST = process.env.LND_REST_HOST || process.env.LITD_HOST || "https://localhost:8080";
 
 function readMacaroon(path) {
   return readFileSync(path).toString("hex");
@@ -183,10 +183,7 @@ export async function payInvoiceSync(bolt11, macaroon) {
 }
 
 export async function newAddress(type = "TAPROOT_PUBKEY") {
-  return lndRequest("/v1/newaddress", {
-    method: "POST",
-    body: { type },
-  });
+  return lndRequest(`/v1/newaddress?type=${type}`);
 }
 
 export async function sendCoins(address, amountSats) {
