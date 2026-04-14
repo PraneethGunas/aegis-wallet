@@ -12,11 +12,14 @@ import { hex } from "@scure/base";
 import { HDKey } from "@scure/bip32";
 import { entropyToMnemonic, mnemonicToSeedSync } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
+import { secp256k1 } from "@noble/curves/secp256k1.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 
 // Active key material (held in memory only, cleared on discard)
 let _fundingKey = null;
 let _authKey = null;
 let _root = null; // BIP32 root for deriving indexed addresses
+let _mnemonic = null; // Recovery phrase (24 words) — shown only on user request
 
 /**
  * Derive funding and auth keys from 32-byte PRF entropy.
@@ -33,10 +36,10 @@ export function deriveKeys(entropy) {
   }
 
   // Convert entropy to BIP39 mnemonic (256-bit entropy → 24-word mnemonic)
-  const mnemonic = entropyToMnemonic(entropy, wordlist);
+  _mnemonic = entropyToMnemonic(entropy, wordlist);
 
   // Mnemonic → BIP32 seed (no passphrase)
-  const seed = mnemonicToSeedSync(mnemonic);
+  const seed = mnemonicToSeedSync(_mnemonic);
 
   // BIP32 master key — kept for deriving fresh addresses at higher indices
   _root = HDKey.fromMasterSeed(seed);
@@ -123,6 +126,20 @@ export function getAuthPublicKey(authKey) {
   const key = authKey || _authKey;
   if (!key) throw new Error("No auth key available. Call deriveKeys() first.");
   return hex.encode(key.publicKey);
+}
+
+/**
+ * Sign a proof of wallet ownership.
+ * Message = sha256(walletId + timestamp), signed with auth_key (secp256k1 ECDSA).
+ * Returns compact signature as hex (64 bytes = 128 hex chars).
+ */
+export function signProof(walletId, timestamp, authKey) {
+  const key = authKey || _authKey;
+  if (!key?.privateKey) throw new Error("No signing key available. Call deriveKeys() first.");
+
+  const message = sha256(new TextEncoder().encode(walletId + timestamp));
+  const sigBytes = secp256k1.sign(message, key.privateKey);
+  return hex.encode(sigBytes);
 }
 
 /**
@@ -213,6 +230,15 @@ export function createFundLNTransaction(
 }
 
 /**
+ * Get the 24-word recovery phrase. Requires biometric auth first (keys must be loaded).
+ * Returns an array of 24 words, or null if keys aren't loaded.
+ */
+export function getRecoveryPhrase() {
+  if (!_mnemonic) return null;
+  return _mnemonic.split(" ");
+}
+
+/**
  * Check if keys are currently loaded in memory.
  */
 export function isKeysLoaded() {
@@ -233,4 +259,5 @@ export function discardKeys() {
   _fundingKey = null;
   _authKey = null;
   _root = null;
+  _mnemonic = null;
 }

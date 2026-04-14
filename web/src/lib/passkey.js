@@ -70,7 +70,9 @@ export async function createWallet() {
 
   const userId = crypto.getRandomValues(new Uint8Array(32));
 
-  // Step 1: Register the passkey — only signal PRF support, don't eval yet
+  const salt = saltToBytes(PRF_SALT);
+
+  // Register the passkey — try PRF eval during create (one biometric if supported)
   const credential = await navigator.credentials.create({
     publicKey: {
       challenge: crypto.getRandomValues(new Uint8Array(32)),
@@ -80,8 +82,8 @@ export async function createWallet() {
       },
       user: {
         id: userId,
-        name: "aegis-user",
-        displayName: "Aegis Wallet User",
+        name: `aegis-${new Date().toISOString().slice(0, 10)}`,
+        displayName: `Aegis Wallet (${new Date().toLocaleDateString()})`,
       },
       pubKeyCredParams: [
         { alg: -7, type: "public-key" },   // ES256
@@ -93,7 +95,7 @@ export async function createWallet() {
         userVerification: "required",
       },
       extensions: {
-        prf: {},  // Signal support only — don't eval during create
+        prf: { eval: { first: salt } },  // Try eval during create
       },
     },
   });
@@ -105,20 +107,26 @@ export async function createWallet() {
       : credential.response.attestationObject
   );
 
-  // Check if PRF is supported
   const createExtensions = credential.getClientExtensionResults();
-  if (createExtensions?.prf?.enabled === false) {
+
+  // Check if PRF is supported at all
+  if (createExtensions?.prf?.enabled === false && !createExtensions?.prf?.results?.first) {
     throw new Error(
       "Your device does not support the PRF extension. " +
       "Please use a device with biometric authentication (Face ID, Touch ID, Windows Hello)."
     );
   }
 
-  // Store credential ID BEFORE get() — this is the permanent wallet identity
+  // Store credential ID — this is the permanent wallet identity
   localStorage.setItem(CREDENTIAL_KEY, credentialId);
 
-  // Step 2: Immediately authenticate to get PRF entropy
-  const entropy = await evaluatePrf(credential.rawId);
+  // Try to extract PRF output from create (one biometric path)
+  let entropy = extractPrfOutput(createExtensions);
+
+  if (!entropy) {
+    // Authenticator doesn't support PRF during create — fall back to get() (second biometric)
+    entropy = await evaluatePrf(credential.rawId);
+  }
 
   return { credentialId, publicKey, entropy };
 }
@@ -137,6 +145,51 @@ export async function authenticate() {
   const entropy = await evaluatePrf(rawId, storedCredentialId);
 
   return { credentialId: storedCredentialId, entropy };
+}
+
+/**
+ * Recover an existing wallet by showing the browser's passkey picker.
+ * Calls credentials.get() with NO allowCredentials — browser shows ALL
+ * passkeys for this domain. User picks one → PRF eval → same wallet restored.
+ *
+ * Use when the credential ID was lost (localStorage cleared) but the
+ * passkey still exists on the device / iCloud / Google.
+ */
+export async function recoverWallet() {
+  const salt = saltToBytes(PRF_SALT);
+
+  const assertion = await navigator.credentials.get({
+    publicKey: {
+      challenge: crypto.getRandomValues(new Uint8Array(32)),
+      rpId: window.location.hostname,
+      // No allowCredentials — browser shows ALL passkeys for this domain
+      userVerification: "required",
+      extensions: {
+        prf: {
+          eval: { first: salt },
+        },
+      },
+    },
+  });
+
+  const credentialId = bufferToBase64url(assertion.rawId);
+  const entropy = extractPrfOutput(assertion.getClientExtensionResults());
+
+  if (!entropy) {
+    throw new Error(
+      "Failed to derive key material. The selected passkey may not support PRF."
+    );
+  }
+
+  // Don't store yet — let the caller verify this is the right wallet first
+  return { credentialId, entropy };
+}
+
+/**
+ * Confirm recovery — store the credential ID after the user verifies it's the right wallet.
+ */
+export function confirmRecovery(credentialId) {
+  localStorage.setItem(CREDENTIAL_KEY, credentialId);
 }
 
 /**
