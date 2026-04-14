@@ -8,7 +8,7 @@ import { Router } from "express";
 import jwt from "jsonwebtoken";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
-import * as lnd from "../services/lnd.js";
+import * as lnd from "../services/lnd-gateway.js";
 import * as mempool from "../services/mempool.js";
 import * as db from "../db/index.js";
 

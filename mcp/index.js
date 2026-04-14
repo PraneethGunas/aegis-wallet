@@ -18,7 +18,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { registerTools } from "./tools.js";
 import { validateAgent } from "./auth.js";
-import { initLnd } from "./lnd.js";
+import { initLnd } from "./lnd-gateway.js";
 
 // ── Parse CLI args ──────────────────────────────────────────────────────────
 const args = process.argv.slice(2);

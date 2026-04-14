@@ -7,7 +7,7 @@
  * Policy management is in the web app (app layer).
  */
 import { z } from "zod";
-import * as lnd from "./lnd.js";
+import * as lnd from "./lnd-gateway.js";
 import { AgentError } from "./auth.js";
 
 // BTC/USD price cache

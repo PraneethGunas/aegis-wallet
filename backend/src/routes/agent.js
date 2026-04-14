@@ -5,8 +5,8 @@
 import { Router } from "express";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
-import * as litd from "../services/litd.js";
-import { bakeAgentMacaroon, sendPayment as lndSendPayment } from "../services/lnd.js";
+import * as litd from "../services/litd-gateway.js";
+import { bakeAgentMacaroon, sendPayment as lndSendPayment } from "../services/lnd-gateway.js";
 import * as db from "../db/index.js";
 import { emitToUser } from "../ws/notifications.js";
 

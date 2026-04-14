@@ -28,7 +28,7 @@ app.use("/wallet", walletRoutes);
 app.use("/agent", agentRoutes);
 
 // ── Lightning endpoints (proxied from frontend) ──────────────────────────────
-import * as lnd from "./services/lnd.js";
+import * as lnd from "./services/lnd-gateway.js";
 
 function authMiddleware(req, res, next) {
   const token = req.headers.authorization?.replace("Bearer ", "");
