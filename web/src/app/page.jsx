@@ -394,7 +394,7 @@ const slides = [
 /* ─── Main Onboarding Component ─── */
 export default function Onboarding() {
   const router = useRouter();
-  const { createWallet, authenticate, error } = useWallet();
+  const { createWallet, authenticate, recoverWallet, error } = useWallet();
   const [step, setStep] = useState(0);
   const [loading, setLoading] = useState(null);
   const [walletExists, setWalletExists] = useState(false);
@@ -564,14 +564,22 @@ export default function Onboarding() {
 
                   {!walletExists && (
                     <button
-                      onClick={handleOpenWallet}
+                      onClick={async () => {
+                        setLoading("recover");
+                        try {
+                          await recoverWallet();
+                          router.push("/dashboard");
+                        } catch {} finally {
+                          setLoading(null);
+                        }
+                      }}
                       disabled={!!loading}
                       className="text-[13px] text-muted-foreground hover:text-foreground transition-colors disabled:opacity-60 flex items-center justify-center gap-2 mx-auto"
                     >
-                      {loading === "open" && (
+                      {loading === "recover" && (
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
                       )}
-                      Open existing wallet
+                      Recover existing wallet
                     </button>
                   )}
                 </motion.div>
