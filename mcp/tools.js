@@ -97,26 +97,37 @@ export function registerTools(server, getAgentContext, opts = {}) {
     wrapTool(async ({ bolt11, purpose, max_cost_sats }) => {
       getAgentContext();
       const btcPrice = await getBtcUsd();
+      const steps = [];
 
       // Decode first
       const decoded = await lnd.decodeInvoice(bolt11);
       if (!decoded.is_valid) return errorReply(`Invalid invoice: ${decoded.error}`);
       if (decoded.is_expired) return errorReply("Invoice expired. Ask for a fresh one.");
 
+      steps.push({
+        step: 1,
+        action: "invoice_decoded",
+        detail: `${decoded.amount_sats} sats ($${satsToUsd(decoded.amount_sats, btcPrice)}) — ${decoded.description || "no description"}`,
+        invoice: {
+          amount_sats: decoded.amount_sats,
+          amount_usd: satsToUsd(decoded.amount_sats, btcPrice),
+          description: decoded.description,
+          payment_hash: decoded.payment_hash,
+          expiry_seconds: decoded.expiry_seconds,
+        },
+      });
+
       // Per-payment cost guard (lnget-style --max-cost)
       if (max_cost_sats && decoded.amount_sats > max_cost_sats) {
-        return reply({
-          success: false,
-          reason: "exceeds_max_cost",
-          message: `Invoice is ${decoded.amount_sats} sats but max_cost_sats is ${max_cost_sats}. Refusing to pay.`,
-          invoice: { amount_sats: decoded.amount_sats, description: decoded.description },
-        });
+        steps.push({ step: 2, action: "rejected", detail: `Exceeds max_cost_sats (${max_cost_sats})` });
+        return reply({ steps, success: false, reason: "exceeds_max_cost" });
       }
 
       // Pay
+      steps.push({ step: 2, action: "paying", detail: `Sending ${decoded.amount_sats} sats via Lightning...` });
       const result = await lnd.sendPayment(bolt11);
+
       if (!result.success) {
-        // Budget exceeded — escalate to user's dashboard for direct payment
         if (result.budget_exceeded && opts.apiUrl && opts.userId) {
           try {
             await fetch(`${opts.apiUrl}/dev/emit`, {
@@ -129,25 +140,34 @@ export function registerTools(server, getAgentContext, opts = {}) {
               }),
             });
           } catch {}
-          return reply({
-            success: false,
-            reason: "budget_exceeded",
-            message: "Your spending budget is exhausted. This invoice has been sent to the user's Aegis dashboard — they can pay it directly.",
-            invoice: { bolt11, amount_sats: decoded.amount_sats, description: decoded.description },
-          });
+          steps.push({ step: 3, action: "budget_exceeded", detail: "Forwarded to user's dashboard" });
+          return reply({ steps, success: false, reason: "budget_exceeded" });
         }
-        return errorReply(`Payment failed: ${result.error}. Invoice: ${decoded.amount_sats} sats. Check channel liquidity with get_balance().`);
+        steps.push({ step: 3, action: "payment_failed", detail: result.error });
+        return reply({ steps, success: false, error: result.error });
       }
 
+      steps.push({
+        step: 3,
+        action: "payment_success",
+        detail: `Paid ${result.amount_sats} sats + ${result.fee_sats || 0} fee`,
+        receipt: {
+          preimage: result.preimage,
+          amount_sats: result.amount_sats,
+          amount_usd: satsToUsd(result.amount_sats, btcPrice),
+          fee_sats: result.fee_sats || 0,
+          fee_usd: satsToUsd(result.fee_sats || 0, btcPrice),
+          payment_hash: decoded.payment_hash,
+          balance_remaining_sats: result.balance_remaining_sats,
+          balance_remaining_usd: satsToUsd(result.balance_remaining_sats, btcPrice),
+        },
+      });
+
       return reply({
+        steps,
         success: true,
-        amount_sats: result.amount_sats,
-        amount_usd: satsToUsd(result.amount_sats, btcPrice),
-        fee_sats: result.fee_sats,
-        preimage: result.preimage,
-        balance_remaining_sats: result.balance_remaining_sats,
-        balance_remaining_usd: satsToUsd(result.balance_remaining_sats, btcPrice),
         purpose,
+        receipt: steps.find((s) => s.receipt)?.receipt || null,
       });
     })
   );
@@ -232,17 +252,22 @@ export function registerTools(server, getAgentContext, opts = {}) {
       headers: z.record(z.string()).optional().describe("Extra HTTP headers"),
       body: z.string().optional().describe("Request body (for POST/PUT)"),
       max_cost_sats: z.number().int().positive().optional().describe("Refuse to pay if invoice exceeds this (safety cap)"),
+      no_cache: z.boolean().default(false).optional().describe("Skip token cache — always pay fresh (useful for demos)"),
     },
-    wrapTool(async ({ url, method, headers: extraHeaders, body, max_cost_sats }) => {
+    wrapTool(async ({ url, method, headers: extraHeaders, body, max_cost_sats, no_cache }) => {
       getAgentContext();
       const btcPrice = await getBtcUsd();
+      const steps = [];
 
       const reqHeaders = { ...extraHeaders };
 
       // Check token cache first — reuse if we already paid this domain
-      const cached = getCachedToken(url);
+      const cached = !no_cache ? getCachedToken(url) : null;
       if (cached) {
         reqHeaders["Authorization"] = `L402 ${cached.macaroon}:${cached.preimage}`;
+        steps.push({ step: 1, action: "cache_hit", detail: `Reusing cached L402 token for ${new URL(url).hostname}` });
+      } else {
+        steps.push({ step: 1, action: "request", detail: `${method} ${url}${no_cache ? " (cache skipped)" : ""}` });
       }
 
       // First request
@@ -258,10 +283,11 @@ export function registerTools(server, getAgentContext, opts = {}) {
 
       // Not a 402 — return the response directly
       if (res.status !== 402) {
+        steps.push({ step: 2, action: "response", detail: `HTTP ${res.status} (no payment needed)` });
         const responseBody = await res.text();
         return reply({
+          steps,
           status: res.status,
-          headers: Object.fromEntries(res.headers.entries()),
           body: truncateBody(responseBody),
           paid: false,
           cached_token: !!cached,
@@ -269,6 +295,8 @@ export function registerTools(server, getAgentContext, opts = {}) {
       }
 
       // ── 402 Payment Required — extract L402 challenge ──────────────────
+      steps.push({ step: 2, action: "l402_challenge", detail: "Server returned HTTP 402 — payment required" });
+
       const wwwAuth = res.headers.get("www-authenticate");
       const challenge = parseL402Challenge(wwwAuth);
       if (!challenge) {
@@ -280,18 +308,34 @@ export function registerTools(server, getAgentContext, opts = {}) {
       if (!decoded.is_valid) return errorReply(`L402 invoice invalid: ${decoded.error}`);
       if (decoded.is_expired) return errorReply("L402 invoice expired.");
 
+      steps.push({
+        step: 3,
+        action: "invoice_decoded",
+        detail: `${decoded.amount_sats} sats ($${satsToUsd(decoded.amount_sats, btcPrice)}) — ${decoded.description || "no description"}`,
+        invoice: {
+          amount_sats: decoded.amount_sats,
+          amount_usd: satsToUsd(decoded.amount_sats, btcPrice),
+          description: decoded.description,
+          payment_hash: decoded.payment_hash,
+          expiry_seconds: decoded.expiry_seconds,
+        },
+      });
+
       // Per-request cost guard
       if (max_cost_sats && decoded.amount_sats > max_cost_sats) {
+        steps.push({ step: 4, action: "rejected", detail: `Invoice ${decoded.amount_sats} sats exceeds max_cost_sats ${max_cost_sats}` });
         return reply({
+          steps,
           success: false,
           reason: "exceeds_max_cost",
-          message: `L402 invoice is ${decoded.amount_sats} sats but max_cost_sats is ${max_cost_sats}. Not paying.`,
-          invoice: { amount_sats: decoded.amount_sats, description: decoded.description },
+          message: `Invoice is ${decoded.amount_sats} sats but max_cost_sats is ${max_cost_sats}. Refusing to pay.`,
         });
       }
 
       // Pay the invoice
+      steps.push({ step: 4, action: "paying", detail: `Sending ${decoded.amount_sats} sats via Lightning...` });
       const payment = await lnd.sendPayment(challenge.invoice);
+
       if (!payment.success) {
         // Budget exceeded — escalate
         if (payment.budget_exceeded && opts.apiUrl && opts.userId) {
@@ -306,7 +350,9 @@ export function registerTools(server, getAgentContext, opts = {}) {
               }),
             });
           } catch {}
+          steps.push({ step: 5, action: "budget_exceeded", detail: "Forwarded invoice to user's dashboard" });
           return reply({
+            steps,
             success: false,
             reason: "budget_exceeded",
             message: "Budget exhausted. Invoice forwarded to user's dashboard for direct payment.",
@@ -314,11 +360,29 @@ export function registerTools(server, getAgentContext, opts = {}) {
             invoice: { bolt11: challenge.invoice, amount_sats: decoded.amount_sats },
           });
         }
-        return errorReply(`L402 payment failed: ${payment.error}. Invoice: ${decoded.amount_sats} sats to ${decoded.description || "unknown"}. Check channel liquidity with get_balance().`);
+        steps.push({ step: 5, action: "payment_failed", detail: payment.error });
+        return reply({ steps, success: false, error: payment.error });
       }
+
+      steps.push({
+        step: 5,
+        action: "payment_success",
+        detail: `Paid ${payment.amount_sats} sats + ${payment.fee_sats || 0} fee`,
+        receipt: {
+          preimage: payment.preimage,
+          amount_sats: payment.amount_sats,
+          amount_usd: satsToUsd(payment.amount_sats, btcPrice),
+          fee_sats: payment.fee_sats || 0,
+          fee_usd: satsToUsd(payment.fee_sats || 0, btcPrice),
+          payment_hash: decoded.payment_hash,
+          balance_remaining_sats: payment.balance_remaining_sats,
+          balance_remaining_usd: satsToUsd(payment.balance_remaining_sats, btcPrice),
+        },
+      });
 
       // Cache the token for this domain
       cacheToken(url, challenge.macaroon, payment.preimage);
+      steps.push({ step: 6, action: "token_cached", detail: `L402 token cached for ${new URL(url).hostname}` });
 
       // Retry with L402 auth header
       const retryHeaders = {
@@ -332,27 +396,24 @@ export function registerTools(server, getAgentContext, opts = {}) {
       try {
         retryRes = await fetch(url, retryOpts);
       } catch (err) {
+        steps.push({ step: 7, action: "retry_failed", detail: err.message });
         return reply({
+          steps,
           paid: true,
-          amount_sats: payment.amount_sats,
-          amount_usd: satsToUsd(payment.amount_sats, btcPrice),
-          preimage: payment.preimage,
+          receipt: steps[4]?.receipt,
           retry_error: err.message,
           message: "Payment succeeded but retry request failed. Use the preimage to retry manually.",
         });
       }
 
       const retryBody = await retryRes.text();
+      steps.push({ step: 7, action: "response", detail: `HTTP ${retryRes.status} — data received` });
+
       return reply({
+        steps,
         status: retryRes.status,
-        headers: Object.fromEntries(retryRes.headers.entries()),
         body: truncateBody(retryBody),
-        paid: true,
-        amount_sats: payment.amount_sats,
-        amount_usd: satsToUsd(payment.amount_sats, btcPrice),
-        fee_sats: payment.fee_sats,
-        balance_remaining_sats: payment.balance_remaining_sats,
-        balance_remaining_usd: satsToUsd(payment.balance_remaining_sats, btcPrice),
+        receipt: steps.find((s) => s.receipt)?.receipt || null,
       });
     })
   );
