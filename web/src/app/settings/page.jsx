@@ -3,15 +3,19 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Smartphone, ArrowLeft, AlertTriangle, Loader2, ChevronDown } from "lucide-react";
+import { Smartphone, ArrowLeft, AlertTriangle, Loader2, ChevronDown, Shield, Eye, EyeOff, Copy, Check } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useWallet } from "@/lib/store";
+import * as bitcoin from "@/lib/bitcoin";
 import * as api from "@/lib/api";
 
 export default function SettingsPage() {
   const router = useRouter();
   const { logout } = useWallet();
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showRecovery, setShowRecovery] = useState(false);
+  const [recoveryWords, setRecoveryWords] = useState(null);
+  const [copiedRecovery, setCopiedRecovery] = useState(false);
   const [withdrawAddress, setWithdrawAddress] = useState("");
   const [showWithdraw, setShowWithdraw] = useState(false);
   const [withdrawing, setWithdrawing] = useState(false);
@@ -74,6 +78,80 @@ export default function SettingsPage() {
                   Wallet key secured in device secure enclave
                 </p>
               </div>
+            </div>
+          </motion.section>
+
+          {/* Recovery Phrase */}
+          <motion.section initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
+            <h2 className="text-lg mb-3" style={{ fontWeight: 500 }}>Recovery phrase</h2>
+            <div className="p-4 rounded-xl bg-card border border-border space-y-3">
+              <div className="flex items-start gap-3">
+                <Shield className="w-5 h-5 text-secondary flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-muted-foreground">
+                  Your 24-word recovery phrase can restore your L1 savings wallet on any BIP39-compatible wallet.
+                  Your passkey already backs this up — only use this if you want an additional offline backup.
+                </p>
+              </div>
+
+              {!showRecovery ? (
+                <motion.button
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => {
+                    const words = bitcoin.getRecoveryPhrase();
+                    if (words) {
+                      setRecoveryWords(words);
+                      setShowRecovery(true);
+                    } else {
+                      setError("Keys not loaded. Re-authenticate with your passkey first.");
+                    }
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl border border-border hover:bg-muted transition-colors text-sm"
+                >
+                  <Eye className="w-4 h-4" />
+                  Show recovery phrase
+                </motion.button>
+              ) : (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-3 gap-2">
+                    {recoveryWords.map((word, i) => (
+                      <div key={i} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/50 border border-border/50">
+                        <span className="text-[10px] text-muted-foreground w-4 text-right">{i + 1}</span>
+                        <span className="font-mono text-sm">{word}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex gap-2">
+                    <motion.button
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => {
+                        navigator.clipboard.writeText(recoveryWords.join(" "));
+                        setCopiedRecovery(true);
+                        setTimeout(() => setCopiedRecovery(false), 2000);
+                      }}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-xl border text-sm transition-colors ${
+                        copiedRecovery
+                          ? "border-success-green/30 text-success-green bg-success-green/10"
+                          : "border-border hover:bg-muted"
+                      }`}
+                    >
+                      {copiedRecovery ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                      {copiedRecovery ? "Copied" : "Copy"}
+                    </motion.button>
+                    <motion.button
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => {
+                        setShowRecovery(false);
+                        setRecoveryWords(null);
+                      }}
+                      className="flex items-center gap-2 px-4 py-2 rounded-xl border border-border hover:bg-muted text-sm"
+                    >
+                      <EyeOff className="w-4 h-4" />
+                      Hide
+                    </motion.button>
+                  </div>
+                </div>
+              )}
             </div>
           </motion.section>
 
