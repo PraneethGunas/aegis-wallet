@@ -1,6 +1,6 @@
 /**
  * LND Gateway client for the MCP package.
- * Drop-in replacement for lnd.js — calls Go sidecar instead of ln-service.
+ * Calls the Go sidecar for all LND operations.
  */
 
 let _gateway = null;

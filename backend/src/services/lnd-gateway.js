@@ -1,6 +1,6 @@
 /**
- * LND Gateway client — drop-in replacement for lnd.js.
- * All calls go through the Go sidecar instead of ln-service gRPC.
+ * LND Gateway client — calls the Go sidecar for all LND operations.
+ * The sidecar talks gRPC to LND directly.
  */
 
 const GATEWAY = process.env.LND_GATEWAY_URL || "http://localhost:3003";
