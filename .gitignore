@@ -65,3 +65,4 @@ TASKS.md
 # Misc
 *.tgz
 *.pid
+lnd-gateway/lnd-gateway

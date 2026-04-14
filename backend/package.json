@@ -4,26 +4,17 @@
   "description": "Aegis Wallet — MCP server + backend API",
   "type": "module",
   "scripts": {
-    "mcp": "node src/mcp/server.js",
-    "dev": "node --watch src/server.js",
-    "test:tools": "node src/mcp/test-client.js",
-    "test:auth": "node src/mcp/test-auth.js",
-    "test:ws": "node src/ws/test-ws.js",
-    "test:approval": "node src/mcp/test-approval.js",
-    "test:pairing": "node src/mcp/test-pairing.js",
-    "test": "node src/mcp/test-client.js && node src/mcp/test-auth.js && node src/ws/test-ws.js && node src/mcp/test-pairing.js"
+    "dev": "node --watch src/server.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1",
     "@noble/curves": "^2.2.0",
+    "@noble/hashes": "^2.0.0",
     "better-sqlite3": "^11.9.1",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.3",
-    "ln-service": "^58.0.3",
-    "ws": "^8.18.2",
-    "zod": "^3.24.4"
+    "ws": "^8.18.2"
   },
   "engines": {
     "node": ">=22.0.0"
