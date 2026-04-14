@@ -297,25 +297,6 @@ router.get("/history", auth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// ── Settings ────────────────────────────────────────────────────────────────
-router.put("/settings", auth, async (req, res, next) => {
-  try {
-    const { auto_pay_threshold_sats } = req.body;
-    if (auto_pay_threshold_sats == null) {
-      return res.status(400).json({ error: "auto_pay_threshold_sats required" });
-    }
-    // Update user threshold in DB
-    const user = db.getUser(req.user.credentialId);
-    if (user) {
-      // db doesn't have updateUser yet, add it inline
-      db.default.prepare(
-        "UPDATE users SET auto_pay_threshold_sats = ? WHERE credential_id = ?"
-      ).run(auto_pay_threshold_sats, req.user.credentialId);
-    }
-    res.json({ ok: true });
-  } catch (err) { next(err); }
-});
-
 // ── Funding address (LND on-chain for L1→L2) ───────────────────────────────
 router.get("/funding-address", auth, async (req, res, next) => {
   try {

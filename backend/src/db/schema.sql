@@ -3,7 +3,6 @@
 CREATE TABLE IF NOT EXISTS users (
   credential_id TEXT PRIMARY KEY,
   signing_pubkey TEXT,
-  auto_pay_threshold_sats INTEGER NOT NULL DEFAULT 15000,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
