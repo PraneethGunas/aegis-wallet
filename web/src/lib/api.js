@@ -84,16 +84,26 @@ export class ApiError extends Error {
 
 // Wallet endpoints
 export const wallet = {
-  create: (credentialId, publicKey) =>
+  create: (walletId, signingPubKey) =>
     request("/wallet/create", {
       method: "POST",
-      body: JSON.stringify({ credentialId, publicKey }),
+      body: JSON.stringify({ walletId, signingPubKey }),
+    }),
+
+  prove: (walletId, sig, timestamp) =>
+    request("/wallet/prove", {
+      method: "POST",
+      body: JSON.stringify({ walletId, sig, timestamp }),
     }),
 
   getBalance: (address) => {
     const params = address ? `?address=${encodeURIComponent(address)}` : "";
     return request(`/wallet/balance${params}`);
   },
+
+  getL2Balance: () => request("/wallet/l2-balance"),
+
+  getBtcPrice: () => request("/wallet/btc-price"),
 
   getHistory: (limit = 20, address) => {
     const params = new URLSearchParams({ limit });

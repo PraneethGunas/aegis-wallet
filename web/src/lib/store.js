@@ -10,6 +10,7 @@
 import { createContext, useContext, useCallback, useEffect, useReducer } from "react";
 import * as passkey from "./passkey";
 import * as bitcoin from "./bitcoin";
+import * as mempool from "./mempool";
 import * as api from "./api";
 import * as ws from "./ws";
 
@@ -129,6 +130,20 @@ export function WalletProvider({ children }) {
 
   // --- Auth Actions ---
 
+  // ── Prove wallet ownership to backend (register pubkey + sign proof) ───────
+  async function proveWallet(walletId) {
+    const signingPubKey = bitcoin.getAuthPublicKey();
+    const timestamp = new Date().toISOString();
+    const sig = bitcoin.signProof(walletId, timestamp);
+
+    // Register/migrate signing pubkey (idempotent)
+    await api.wallet.create(walletId, signingPubKey);
+
+    // Prove ownership → get session token
+    const result = await api.wallet.prove(walletId, sig, timestamp);
+    if (result?.token) api.setAuthToken(result.token);
+  }
+
   const createWallet = useCallback(async () => {
     try {
       dispatch({ type: "CLEAR_ERROR" });
@@ -138,22 +153,19 @@ export function WalletProvider({ children }) {
         return authenticate();
       }
 
-      const { credentialId, publicKey, entropy } = await passkey.createWallet();
+      const { credentialId, entropy } = await passkey.createWallet();
 
       // Derive keys from PRF entropy (deterministic: same entropy = same keys always)
-      const { fundingKey, authKey } = bitcoin.deriveKeys(entropy);
+      const { fundingKey } = bitcoin.deriveKeys(entropy);
       const fundingAddress = bitcoin.getFundingAddress(fundingKey);
-      const authPubKey = bitcoin.getAuthPublicKey(authKey);
 
-      // Register with backend for L2 services (balance, agent, MCP)
+      // Register signing pubkey + prove ownership → get session token
       try {
-        const result = await api.wallet.create(credentialId, authPubKey);
-        if (result?.token) api.setAuthToken(result.token);
+        await proveWallet(credentialId);
       } catch {
         // Backend offline — L1 still works without it
       }
 
-      // Persist funding address — public data, safe for localStorage
       localStorage.setItem("aegis_funding_address", fundingAddress);
 
       dispatch({
@@ -179,16 +191,58 @@ export function WalletProvider({ children }) {
       const { fundingKey } = bitcoin.deriveKeys(entropy);
       const fundingAddress = bitcoin.getFundingAddress(fundingKey);
 
-      // Get backend token for L2 services
+      // Prove wallet ownership → get session token
       try {
-        const result = await api.wallet.create(credentialId, bitcoin.getAuthPublicKey());
-        if (result?.token) api.setAuthToken(result.token);
-      } catch {
-        // Backend offline — L1 still works
+        await proveWallet(credentialId);
+      } catch (err) {
+        console.warn("Backend auth failed:", err.message);
       }
 
-      // Persist funding address — will be identical to previous derivation
       localStorage.setItem("aegis_funding_address", fundingAddress);
+
+      dispatch({
+        type: "SET_AUTHENTICATED",
+        credentialId,
+        fundingAddress,
+      });
+
+      ws.connect();
+      return { credentialId, fundingAddress };
+    } catch (err) {
+      dispatch({ type: "SET_ERROR", error: err.message });
+      throw err;
+    }
+  }, []);
+
+  const recoverWallet = useCallback(async () => {
+    try {
+      dispatch({ type: "CLEAR_ERROR" });
+      const { credentialId, entropy } = await passkey.recoverWallet();
+
+      const { fundingKey } = bitcoin.deriveKeys(entropy);
+      const fundingAddress = bitcoin.getFundingAddress(fundingKey);
+
+      // Check if this address has funds before committing
+      const { confirmed_sats, unconfirmed_sats } = await mempool.getAddressBalance(fundingAddress);
+
+      if (confirmed_sats === 0 && unconfirmed_sats === 0) {
+        bitcoin.discardKeys();
+        const tryAgain = window.confirm(
+          `Wrong passkey — this one has 0 sats.\n\nAddress: ${fundingAddress}\n\nTry another passkey?`
+        );
+        if (tryAgain) return recoverWallet();
+        return null;
+      }
+
+      // Right wallet — commit the credential
+      passkey.confirmRecovery(credentialId);
+      localStorage.setItem("aegis_funding_address", fundingAddress);
+
+      try {
+        await proveWallet(credentialId);
+      } catch (err) {
+        console.warn("Backend auth failed:", err.message);
+      }
 
       dispatch({
         type: "SET_AUTHENTICATED",
@@ -219,40 +273,61 @@ export function WalletProvider({ children }) {
   const fetchBalance = useCallback(async () => {
     dispatch({ type: "SET_LOADING", key: "balance", value: true });
     try {
-      // Pass ALL derived addresses so backend aggregates balance across all indices
+      // L1: query mempool.space directly from browser (no backend needed)
       let addresses;
       try {
-        addresses = bitcoin.getAllFundingAddresses().join(",");
+        addresses = bitcoin.getAllFundingAddresses();
       } catch {
-        addresses = localStorage.getItem("aegis_funding_address") || "";
+        const cached = localStorage.getItem("aegis_funding_address");
+        addresses = cached ? [cached] : [];
       }
-      const data = await api.wallet.getBalance(addresses);
-      dispatch({
-        type: "SET_BALANCE",
-        balance: {
-          l1Sats: data.l1Sats ?? 0,
-          l1Unconfirmed: data.l1Unconfirmed ?? 0,
-          l2Sats: data.l2Sats ?? 0,
-          l1Usd: data.l1Usd ?? 0,
-          l2Usd: data.l2Usd ?? 0,
-          totalUsd: data.totalUsd ?? 0,
-          totalBtc: data.totalBtc ?? 0,
-        },
-      });
-      if (data.btcPrice) {
-        dispatch({ type: "SET_BTC_PRICE", price: data.btcPrice });
+
+      // L1 + L2 in parallel (BTC price from store, fetched separately)
+      const [l1Result, l2Result] = await Promise.allSettled([
+        addresses.length > 0
+          ? mempool.getMultiAddressBalance(addresses)
+          : Promise.resolve({ confirmed_sats: 0, unconfirmed_sats: 0 }),
+        api.getAuthToken()
+          ? api.wallet.getL2Balance().catch(() => ({ l2Sats: 0 }))
+          : Promise.resolve({ l2Sats: 0 }),
+      ]);
+
+      const l1Sats = l1Result.status === "fulfilled" ? l1Result.value.confirmed_sats : 0;
+      const l1Unconfirmed = l1Result.status === "fulfilled" ? l1Result.value.unconfirmed_sats : 0;
+      const l2Sats = l2Result.status === "fulfilled" ? (l2Result.value.l2Sats ?? 0) : 0;
+
+      // Get price — use store value, or fetch fresh if not available yet
+      let price = state.btcPrice;
+      if (!price) {
+        try {
+          const priceData = await api.wallet.getBtcPrice();
+          price = priceData.btcPrice || 0;
+          if (price) dispatch({ type: "SET_BTC_PRICE", price });
+        } catch {
+          price = 0;
+        }
       }
-      // Cache last-known balance so returning users don't see $0.00 flash
+
+
+      const totalSats = l1Sats + l2Sats;
+
+      const balance = {
+        l1Sats,
+        l1Unconfirmed,
+        l2Sats,
+        l1Usd: +((l1Sats / 1e8) * price).toFixed(2),
+        l2Usd: +((l2Sats / 1e8) * price).toFixed(2),
+        totalUsd: +((totalSats / 1e8) * price).toFixed(2),
+        totalBtc: +(totalSats / 1e8).toFixed(8),
+      };
+
+      dispatch({ type: "SET_BALANCE", balance });
+
+      // Cache for next load
       try {
         localStorage.setItem("aegis_cached_balance", JSON.stringify({
-          l1Sats: data.l1Sats ?? 0,
-          l1Unconfirmed: data.l1Unconfirmed ?? 0,
-          l2Sats: data.l2Sats ?? 0,
-          l1Usd: data.l1Usd ?? 0,
-          l2Usd: data.l2Usd ?? 0,
-          totalUsd: data.totalUsd ?? 0,
-          totalBtc: data.totalBtc ?? 0,
-          btcPrice: data.btcPrice ?? 0,
+          ...balance,
+          btcPrice: price,
           ts: Date.now(),
         }));
       } catch {}
@@ -274,7 +349,7 @@ export function WalletProvider({ children }) {
       } catch {
         addresses = localStorage.getItem("aegis_funding_address") || "";
       }
-      const data = await api.wallet.getHistory(20, addresses);
+      const data = await api.wallet.getHistory(200, addresses);
       dispatch({
         type: "SET_TRANSACTIONS",
         transactions: data.transactions ?? [],
@@ -313,12 +388,9 @@ export function WalletProvider({ children }) {
 
   const fetchBtcPrice = useCallback(async () => {
     try {
-      const res = await fetch(
-        "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
-      );
-      const data = await res.json();
-      if (data.bitcoin?.usd) {
-        dispatch({ type: "SET_BTC_PRICE", price: data.bitcoin.usd });
+      const data = await api.wallet.getBtcPrice();
+      if (data.btcPrice) {
+        dispatch({ type: "SET_BTC_PRICE", price: data.btcPrice });
       }
     } catch {
       // Keep fallback price
@@ -357,13 +429,14 @@ export function WalletProvider({ children }) {
 
   const payDirect = useCallback(
     async (bolt11) => {
+      dispatch({ type: "CLEAR_PENDING_APPROVAL" });
       try {
-        await api.agent.payDirect(bolt11);
-        dispatch({ type: "CLEAR_PENDING_APPROVAL" });
+        const result = await api.agent.payDirect(bolt11);
         fetchBalance();
         fetchTransactions();
+        return result;
       } catch (err) {
-        dispatch({ type: "SET_ERROR", error: err.message });
+        dispatch({ type: "SET_ERROR", error: `Payment failed: ${err.message}` });
       }
     },
     [fetchBalance, fetchTransactions]
@@ -575,16 +648,23 @@ export function WalletProvider({ children }) {
             credentialId,
             fundingAddress,
           });
+
+          // Prove wallet ownership → get session token
+          try {
+            await proveWallet(credentialId);
+          } catch (err) {
+            console.warn("Backend auth failed:", err.message);
+          }
+
           ws.connect();
-          fetchBalance();
-          fetchTransactions();
-          fetchAgentStatus();
+          // Only fetch if we have a valid token
+          if (api.getAuthToken()) {
+            fetchBalance();
+            fetchTransactions();
+            fetchAgentStatus();
+          }
         } catch {
-          // Auth failed/cancelled — still show cached data, just can't derive new addresses
-          ws.connect();
-          fetchBalance();
-          fetchTransactions();
-          fetchAgentStatus();
+          // Auth failed/cancelled — show cached data, don't fire API calls without token
         }
       })();
     } else if (credentialId && isLandingPage) {
@@ -609,6 +689,7 @@ export function WalletProvider({ children }) {
     ...state,
     createWallet,
     authenticate,
+    recoverWallet,
     logout,
     fetchBalance,
     fetchTransactions,
