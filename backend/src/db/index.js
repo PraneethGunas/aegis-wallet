@@ -19,6 +19,9 @@ db.pragma("foreign_keys = ON");
 const schema = readFileSync(join(__dirname, "schema.sql"), "utf8");
 db.exec(schema);
 
+// Migration: add signing_pubkey column if missing (existing DBs)
+try { db.exec("ALTER TABLE users ADD COLUMN signing_pubkey TEXT"); } catch {}
+
 // ── Agents ──────────────────────────────────────────────────────────────────
 
 /** Lookup agent by auth_token (used by MCP auth on every tool call). */
@@ -114,10 +117,16 @@ export function getUser(credentialId) {
   return db.prepare("SELECT * FROM users WHERE credential_id = ?").get(credentialId) || null;
 }
 
-export function createUser(credentialId, autoPayThresholdSats = 15000) {
+export function createUser(walletId, signingPubKey = null) {
   db.prepare(
-    "INSERT OR IGNORE INTO users (credential_id, auto_pay_threshold_sats) VALUES (?, ?)"
-  ).run(credentialId, autoPayThresholdSats);
+    "INSERT OR IGNORE INTO users (credential_id, signing_pubkey) VALUES (?, ?)"
+  ).run(walletId, signingPubKey);
+}
+
+export function setSigningPubKey(walletId, signingPubKey) {
+  return db.prepare(
+    "UPDATE users SET signing_pubkey = ? WHERE credential_id = ?"
+  ).run(signingPubKey, walletId);
 }
 
 export default db;

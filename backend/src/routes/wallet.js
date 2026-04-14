@@ -6,6 +6,8 @@
  */
 import { Router } from "express";
 import jwt from "jsonwebtoken";
+import { secp256k1 } from "@noble/curves/secp256k1.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import * as lnd from "../services/lnd.js";
 import * as mempool from "../services/mempool.js";
 import * as db from "../db/index.js";
@@ -45,37 +47,71 @@ function auth(req, res, next) {
   }
 }
 
-// ── Create wallet (simplified — passkey verification done client-side) ──────
+// ── Register wallet — store signing public key ─────────────────────────────
 router.post("/create", async (req, res, next) => {
   try {
-    const { credentialId, publicKey } = req.body;
-    if (!credentialId || !publicKey) {
-      return res.status(400).json({ error: "credentialId and publicKey required" });
+    const { walletId, signingPubKey } = req.body;
+    // Backwards compat: accept old field names during migration
+    const wid = walletId || req.body.credentialId;
+    const spk = signingPubKey || req.body.publicKey;
+    if (!wid || !spk) {
+      return res.status(400).json({ error: "walletId and signingPubKey required" });
     }
 
-    const existing = db.getUser(credentialId);
+    const existing = db.getUser(wid);
     if (existing) {
-      // Already registered — just issue token
-      const token = jwt.sign({ credentialId }, JWT_SECRET, { expiresIn: "24h" });
-      return res.json({ ok: true, credentialId, token });
+      // Migration: store signing pubkey if missing
+      if (!existing.signing_pubkey) {
+        db.setSigningPubKey(wid, spk);
+      }
+      return res.json({ ok: true, walletId: wid });
     }
 
-    db.createUser(credentialId);
-    const token = jwt.sign({ credentialId }, JWT_SECRET, { expiresIn: "24h" });
-    res.json({ ok: true, credentialId, token });
+    db.createUser(wid, spk);
+    res.json({ ok: true, walletId: wid });
   } catch (err) { next(err); }
 });
 
-// ── Login (simplified — passkey assertion done client-side) ─────────────────
-router.post("/login", async (req, res, next) => {
+// ── Prove wallet ownership — sign(walletId + timestamp) with signing key ────
+router.post("/prove", async (req, res, next) => {
   try {
-    const { credentialId } = req.body;
-    if (!credentialId) return res.status(400).json({ error: "credentialId required" });
+    const { walletId, sig, timestamp } = req.body;
+    // Backwards compat: accept old field names
+    const wid = walletId || req.body.credentialId;
+    if (!wid || !sig || !timestamp) {
+      return res.status(400).json({ error: "walletId, sig, and timestamp required" });
+    }
 
-    const user = db.getUser(credentialId);
-    if (!user) return res.status(404).json({ error: "Wallet not found" });
+    // Check timestamp is within 60s
+    const age = Math.abs(Date.now() - new Date(timestamp).getTime());
+    if (age > 60_000) {
+      return res.status(401).json({ error: "Timestamp expired. Must be within 60 seconds." });
+    }
 
-    const token = jwt.sign({ credentialId }, JWT_SECRET, { expiresIn: "24h" });
+    // Look up stored signing pubkey
+    const user = db.getUser(wid);
+    if (!user?.signing_pubkey) {
+      return res.status(401).json({ error: "No signing key registered. Call /wallet/create first." });
+    }
+
+    // Verify ECDSA signature over (walletId + timestamp)
+    const message = sha256(new TextEncoder().encode(wid + timestamp));
+    const sigBytes = Buffer.from(sig, "hex");
+    const pubBytes = Buffer.from(user.signing_pubkey, "hex");
+
+    let valid = false;
+    try {
+      valid = secp256k1.verify(sigBytes, message, pubBytes);
+    } catch {
+      return res.status(401).json({ error: "Invalid signature format" });
+    }
+
+    if (!valid) {
+      return res.status(401).json({ error: "Signature verification failed" });
+    }
+
+    // Proof accepted — issue session token
+    const token = jwt.sign({ credentialId: wid }, JWT_SECRET, { expiresIn: "24h" });
     res.json({ ok: true, token });
   } catch (err) { next(err); }
 });
@@ -121,6 +157,20 @@ router.get("/balance", auth, async (req, res, next) => {
       totalUsd: +((totalSats / 1e8) * btcPrice).toFixed(2),
       btcPrice,
     });
+  } catch (err) { next(err); }
+});
+
+// ── BTC Price (cached, no auth) ──────────────────────────────────────────────
+router.get("/btc-price", async (req, res) => {
+  const btcPrice = await getBtcPrice();
+  res.json({ btcPrice });
+});
+
+// ── L2 Balance only (Lightning via LND) ─────────────────────────────────────
+router.get("/l2-balance", auth, async (req, res, next) => {
+  try {
+    const l2Result = await lnd.getBalance().catch(() => ({ balance_sats: 0 }));
+    res.json({ l2Sats: parseInt(l2Result.balance_sats || "0") });
   } catch (err) { next(err); }
 });
 
@@ -180,7 +230,7 @@ router.post("/receive", auth, async (req, res, next) => {
 // L1 on-chain txs from mempool.space, L2 Lightning from LND, agent txs from DB
 router.get("/history", auth, async (req, res, next) => {
   try {
-    const limit = parseInt(req.query.limit) || 20;
+    const limit = parseInt(req.query.limit) || 200;
     const addressParam = req.query.address || "";
     const addresses = addressParam.split(",").filter(Boolean);
     const transactions = [];
