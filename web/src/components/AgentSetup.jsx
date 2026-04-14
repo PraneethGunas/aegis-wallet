@@ -12,6 +12,7 @@ export default function AgentSetup({ onPaired, btcPrice = 100000, credentialId =
   const [creating, setCreating] = useState(false);
   const [credential, setCredential] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [copiedConfig, setCopiedConfig] = useState(false);
   const [error, setError] = useState(null);
 
   const budgetSats = Math.round((parseFloat(budgetUsd || 0) / btcPrice) * 1e8);
@@ -69,29 +70,53 @@ Pay any invoice within your balance — no approval needed. If a payment fails w
           </p>
         </div>
 
-        <motion.button
-          whileTap={{ scale: 0.98 }}
-          transition={spring}
-          onClick={() => {
-            navigator.clipboard.writeText(generatePrompt(credential.macaroon));
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
-          }}
-          className={`w-full py-3 rounded-xl flex items-center justify-center gap-2 text-sm font-medium transition-colors ${
-            copied
-              ? "bg-success-green/10 text-success-green border border-success-green/20"
-              : "bg-secondary text-white"
-          }`}
-        >
-          {copied ? (
-            <><Check className="w-4 h-4" /> Copied to clipboard</>
-          ) : (
-            <><Copy className="w-4 h-4" /> Copy setup for Claude</>
-          )}
-        </motion.button>
+        <div className="flex gap-2">
+          <motion.button
+            whileTap={{ scale: 0.98 }}
+            transition={spring}
+            onClick={() => {
+              navigator.clipboard.writeText(generatePrompt(credential.macaroon));
+              setCopied(true);
+              setTimeout(() => setCopied(false), 2000);
+            }}
+            className={`flex-1 py-3 rounded-xl flex items-center justify-center gap-2 text-sm font-medium transition-colors ${
+              copied
+                ? "bg-success-green/10 text-success-green border border-success-green/20"
+                : "bg-secondary text-white"
+            }`}
+          >
+            {copied ? (
+              <><Check className="w-4 h-4" /> Copied</>
+            ) : (
+              <><Copy className="w-4 h-4" /> Copy setup for Claude</>
+            )}
+          </motion.button>
+
+          <motion.button
+            whileTap={{ scale: 0.98 }}
+            transition={spring}
+            onClick={() => {
+              const config = JSON.stringify({ mcpServers: { "aegis-wallet": { command: "npx", args: ["-y", "aegis-wallet", "--macaroon", credential.macaroon, "--api-url", process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001", "--user-id", credentialId] } } }, null, 2);
+              navigator.clipboard.writeText(config);
+              setCopiedConfig(true);
+              setTimeout(() => setCopiedConfig(false), 2000);
+            }}
+            className={`py-3 px-4 rounded-xl flex items-center justify-center gap-2 text-sm font-medium transition-colors ${
+              copiedConfig
+                ? "bg-success-green/10 text-success-green border border-success-green/20"
+                : "bg-muted/50 text-muted-foreground border border-border/50 hover:text-foreground"
+            }`}
+          >
+            {copiedConfig ? (
+              <><Check className="w-4 h-4" /> Config</>
+            ) : (
+              <><Key className="w-4 h-4" /> Config only</>
+            )}
+          </motion.button>
+        </div>
 
         <p className="text-[11px] text-muted-foreground text-center">
-          Paste this as your first message to Claude. It includes the MCP config and wallet instructions.
+          Full setup includes MCP config + instructions. Config only copies the JSON for Claude Desktop settings.
         </p>
       </div>
     );
