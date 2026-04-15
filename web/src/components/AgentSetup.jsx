@@ -12,7 +12,6 @@ export default function AgentSetup({ onPaired, btcPrice = 100000, credentialId =
   const [creating, setCreating] = useState(false);
   const [credential, setCredential] = useState(null);
   const [copied, setCopied] = useState(false);
-  const [copiedConfig, setCopiedConfig] = useState(false);
   const [error, setError] = useState(null);
 
   const budgetSats = Math.round((parseFloat(budgetUsd || 0) / btcPrice) * 1e8);
@@ -30,27 +29,21 @@ export default function AgentSetup({ onPaired, btcPrice = 100000, credentialId =
     setCreating(false);
   };
 
-  const generatePrompt = (macaroon) => `I'm using the Aegis wallet — a Bitcoin Lightning wallet with AI agent support. I've given you access to it via the aegis-wallet MCP server. Add this to your MCP config if it's not already there:
-
-${JSON.stringify({ mcpServers: { "aegis-wallet": { command: "npx", args: ["-y", "aegis-wallet"], env: { LND_MACAROON_BASE64: macaroon, LND_REST_HOST: "https://localhost:8080", AEGIS_API_URL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001", AEGIS_WALLET_ID: credentialId, NODE_TLS_REJECT_UNAUTHORIZED: "0" } } } }, null, 2)}
-
-This is a real wallet on Bitcoin mainnet with real money. Your spending limit is ${budgetSats.toLocaleString()} sats (~$${budgetUsd}), enforced cryptographically by LND.
-
-You have these tools:
-
-  get_balance()                             — your remaining spending balance
-  pay_invoice(bolt11, purpose, max_cost_sats?) — pay a Lightning invoice (max_cost_sats refuses if invoice exceeds it)
-  decode_invoice(bolt11)                    — inspect an invoice before paying
-  list_payments(limit)                      — recent payment history
-  create_invoice(amount_sats, memo)         — generate an invoice to receive a payment
-  l402_fetch(url, method?, headers?, body?, max_cost_sats?) — fetch a URL with automatic L402 payment (handles 402 → pay → retry in one call, caches tokens per domain)
-  get_spending_summary()                    — total spent, payment count, remaining balance, cached L402 domains
-
-For L402 paywalled APIs, prefer l402_fetch — it handles the entire flow automatically: makes the request, extracts the invoice from the 402, pays it, caches the token, and retries. No manual steps needed. Tokens are cached per domain so you won't re-pay on subsequent requests.
-
-Use max_cost_sats on pay_invoice or l402_fetch to set a per-payment safety cap. If the invoice exceeds it, the tool refuses to pay.
-
-Pay any invoice within your balance — no approval needed. If a payment fails with "budget_exceeded", tell me — the invoice has been forwarded to my Aegis dashboard where I can pay it directly. After every payment, report what you paid, the cost, and your remaining balance.`;
+  const generateConfig = (macaroon) => JSON.stringify({
+    mcpServers: {
+      "aegis-wallet": {
+        command: "npx",
+        args: ["-y", "aegis-wallet"],
+        env: {
+          LND_MACAROON_BASE64: macaroon,
+          LND_REST_HOST: "https://localhost:8080",
+          AEGIS_API_URL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001",
+          AEGIS_WALLET_ID: credentialId,
+          NODE_TLS_REJECT_UNAUTHORIZED: "0",
+        },
+      },
+    },
+  }, null, 2);
 
   // ── After credential generated ──────────────────────────────────
   if (credential) {
@@ -70,53 +63,29 @@ Pay any invoice within your balance — no approval needed. If a payment fails w
           </p>
         </div>
 
-        <div className="flex gap-2">
-          <motion.button
-            whileTap={{ scale: 0.98 }}
-            transition={spring}
-            onClick={() => {
-              navigator.clipboard.writeText(generatePrompt(credential.macaroon));
-              setCopied(true);
-              setTimeout(() => setCopied(false), 2000);
-            }}
-            className={`flex-1 py-3 rounded-xl flex items-center justify-center gap-2 text-sm font-medium transition-colors ${
-              copied
-                ? "bg-success-green/10 text-success-green border border-success-green/20"
-                : "bg-secondary text-white"
-            }`}
-          >
-            {copied ? (
-              <><Check className="w-4 h-4" /> Copied</>
-            ) : (
-              <><Copy className="w-4 h-4" /> Copy setup for Claude</>
-            )}
-          </motion.button>
-
-          <motion.button
-            whileTap={{ scale: 0.98 }}
-            transition={spring}
-            onClick={() => {
-              const config = JSON.stringify({ mcpServers: { "aegis-wallet": { command: "npx", args: ["-y", "aegis-wallet"], env: { LND_MACAROON_BASE64: credential.macaroon, LND_REST_HOST: "https://localhost:8080", NODE_TLS_REJECT_UNAUTHORIZED: "0" } } } }, null, 2);
-              navigator.clipboard.writeText(config);
-              setCopiedConfig(true);
-              setTimeout(() => setCopiedConfig(false), 2000);
-            }}
-            className={`py-3 px-4 rounded-xl flex items-center justify-center gap-2 text-sm font-medium transition-colors ${
-              copiedConfig
-                ? "bg-success-green/10 text-success-green border border-success-green/20"
-                : "bg-muted/50 text-muted-foreground border border-border/50 hover:text-foreground"
-            }`}
-          >
-            {copiedConfig ? (
-              <><Check className="w-4 h-4" /> Config</>
-            ) : (
-              <><Key className="w-4 h-4" /> Config only</>
-            )}
-          </motion.button>
-        </div>
+        <motion.button
+          whileTap={{ scale: 0.98 }}
+          transition={spring}
+          onClick={() => {
+            navigator.clipboard.writeText(generateConfig(credential.macaroon));
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+          }}
+          className={`w-full py-3 rounded-xl flex items-center justify-center gap-2 text-sm font-medium transition-colors ${
+            copied
+              ? "bg-success-green/10 text-success-green border border-success-green/20"
+              : "bg-secondary text-white"
+          }`}
+        >
+          {copied ? (
+            <><Check className="w-4 h-4" /> Copied to clipboard</>
+          ) : (
+            <><Copy className="w-4 h-4" /> Copy MCP config</>
+          )}
+        </motion.button>
 
         <p className="text-[11px] text-muted-foreground text-center">
-          Full setup includes MCP config + instructions. Config only copies the JSON for Claude Desktop settings.
+          Paste into Claude Desktop → Settings → Developer → Edit Config
         </p>
       </div>
     );
