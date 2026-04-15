@@ -11,8 +11,7 @@ export default function AgentSetup({ onPaired, btcPrice = 100000, credentialId =
   const [budgetUsd, setBudgetUsd] = useState("2.50");
   const [creating, setCreating] = useState(false);
   const [credential, setCredential] = useState(null);
-  const [copied, setCopied] = useState(false);
-  const [copiedCli, setCopiedCli] = useState(false);
+  const [copied, setCopied] = useState(null); // null | "config" | "claude" | "gemini"
   const [editing, setEditing] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [error, setError] = useState(null);
@@ -57,8 +56,11 @@ export default function AgentSetup({ onPaired, btcPrice = 100000, credentialId =
 
   const satsToUsd = (sats) => btcPrice > 0 ? ((sats / 1e8) * btcPrice).toFixed(2) : "0.00";
 
-  const generateCli = (macaroon) =>
+  const generateClaudeCli = (macaroon) =>
     `claude mcp add lightning-wallet-mcp -e 'LND_MACAROON_BASE64=${macaroon}' -e LND_REST_HOST=https://localhost:8080 -e NODE_TLS_REJECT_UNAUTHORIZED=0 -e AEGIS_WEBHOOK_URL=${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001"}/agent/webhook -- npx lightning-wallet-mcp`;
+
+  const generateGeminiCli = (macaroon) =>
+    `gemini mcp add lightning-wallet-mcp -e 'LND_MACAROON_BASE64=${macaroon}' -e LND_REST_HOST=https://localhost:8080 -e NODE_TLS_REJECT_UNAUTHORIZED=0 -e AEGIS_WEBHOOK_URL=${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001"}/agent/webhook -- npx lightning-wallet-mcp`;
 
   const generateConfig = (macaroon) => JSON.stringify({
     mcpServers: {
@@ -104,43 +106,53 @@ export default function AgentSetup({ onPaired, btcPrice = 100000, credentialId =
   );
 
   // ── Copy buttons (shared) ───────────────────────────────────────
-  const CopyButtons = ({ macaroon }) => (
-    <div className="flex gap-2">
-      <motion.button
-        whileTap={{ scale: 0.98 }}
-        transition={spring}
-        onClick={() => {
-          navigator.clipboard.writeText(generateConfig(macaroon));
-          setCopied(true);
-          setTimeout(() => setCopied(false), 2000);
-        }}
-        className={`flex-1 py-2.5 rounded-xl flex items-center justify-center gap-2 text-xs font-medium transition-colors ${
-          copied
-            ? "bg-success-green/10 text-success-green border border-success-green/20"
-            : "bg-muted/50 text-muted-foreground border border-border/50 hover:text-foreground"
-        }`}
-      >
-        {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-        {copied ? "Copied" : "MCP config"}
-      </motion.button>
+  const copyAndFlash = (text, key) => {
+    navigator.clipboard.writeText(text);
+    setCopied(key);
+    setTimeout(() => setCopied(null), 2000);
+  };
 
-      <motion.button
-        whileTap={{ scale: 0.98 }}
-        transition={spring}
-        onClick={() => {
-          navigator.clipboard.writeText(generateCli(macaroon));
-          setCopiedCli(true);
-          setTimeout(() => setCopiedCli(false), 2000);
-        }}
-        className={`flex-1 py-2.5 rounded-xl flex items-center justify-center gap-2 text-xs font-medium transition-colors ${
-          copiedCli
-            ? "bg-success-green/10 text-success-green border border-success-green/20"
-            : "bg-muted/50 text-muted-foreground border border-border/50 hover:text-foreground"
-        }`}
-      >
-        {copiedCli ? <Check className="w-3.5 h-3.5" /> : <Terminal className="w-3.5 h-3.5" />}
-        {copiedCli ? "Copied" : "CLI command"}
-      </motion.button>
+  const CopyBtn = ({ label, icon: Icon, onClick, active }) => (
+    <motion.button
+      whileTap={{ scale: 0.98 }}
+      transition={spring}
+      onClick={onClick}
+      className={`flex-1 py-2.5 rounded-xl flex items-center justify-center gap-1.5 text-[11px] font-medium transition-colors ${
+        active
+          ? "bg-success-green/10 text-success-green border border-success-green/20"
+          : "bg-muted/50 text-muted-foreground border border-border/50 hover:text-foreground"
+      }`}
+    >
+      {active ? <Check className="w-3 h-3" /> : <Icon className="w-3 h-3" />}
+      {active ? "Copied" : label}
+    </motion.button>
+  );
+
+  const CopyButtons = ({ macaroon }) => (
+    <div className="space-y-2">
+      <div className="flex gap-2">
+        <CopyBtn
+          label="JSON config"
+          icon={Copy}
+          active={copied === "config"}
+          onClick={() => copyAndFlash(generateConfig(macaroon), "config")}
+        />
+        <CopyBtn
+          label="Claude CLI"
+          icon={Terminal}
+          active={copied === "claude"}
+          onClick={() => copyAndFlash(generateClaudeCli(macaroon), "claude")}
+        />
+        <CopyBtn
+          label="Gemini CLI"
+          icon={Terminal}
+          active={copied === "gemini"}
+          onClick={() => copyAndFlash(generateGeminiCli(macaroon), "gemini")}
+        />
+      </div>
+      <p className="text-[10px] text-muted-foreground text-center">
+        JSON for Claude Desktop / Gemini settings. CLI for terminal.
+      </p>
     </div>
   );
 
