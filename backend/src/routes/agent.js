@@ -1,175 +1,99 @@
 /**
- * Agent REST routes — create, pair, status, topup, approve, pause.
- * Wired to real litd + DB services.
+ * Agent REST routes — create, status, update budget, revoke.
+ * All state lives in litd accounts — no database.
  */
 import { Router } from "express";
-import jwt from "jsonwebtoken";
-import crypto from "crypto";
 import * as litd from "../services/litd-gateway.js";
 import { bakeAgentMacaroon, sendPayment as lndSendPayment } from "../services/lnd-gateway.js";
-import * as db from "../db/index.js";
-import { emitToUser } from "../ws/notifications.js";
-
 const router = Router();
-const JWT_SECRET = process.env.JWT_SECRET || "aegis-dev-secret";
 
-function auth(req, res, next) {
-  const token = req.headers.authorization?.replace("Bearer ", "");
-  if (!token) return res.status(401).json({ error: "Missing token" });
-  try {
-    req.user = jwt.verify(token, JWT_SECRET);
-    next();
-  } catch {
-    res.status(401).json({ error: "Invalid token" });
-  }
-}
+// In-memory pending invoices (from webhook)
+const pendingInvoices = [];
 
-/** Find the user's active agent. */
-function getUserAgent(credentialId) {
-  // Query all agents for this user
-  const agents = db.default.prepare(
-    "SELECT * FROM agents WHERE user_credential_id = ? ORDER BY created_at DESC"
-  ).all(credentialId);
-  return agents[0] || null;
-}
+// ── Webhook — receives payment failure notifications from MCP ────────────────
+router.post("/webhook", (req, res) => {
+  const { event, bolt11, amount_sats, description, error, url, timestamp } = req.body;
+  pendingInvoices.push({ bolt11, amount_sats, description, error, url, timestamp: timestamp || new Date().toISOString() });
+  res.json({ ok: true });
+});
 
-// ── Create Agent — generates litd account with scoped macaroon ──────────────
-router.post("/create", auth, async (req, res, next) => {
+router.get("/webhook/pending", (req, res) => {
+  res.json({ invoices: pendingInvoices });
+});
+
+router.post("/webhook/clear", (req, res) => {
+  const { bolt11 } = req.body;
+  const idx = pendingInvoices.findIndex((inv) => inv.bolt11 === bolt11);
+  if (idx !== -1) pendingInvoices.splice(idx, 1);
+  res.json({ ok: true, remaining: pendingInvoices.length });
+});
+
+// ── Create or update agent — one litd account per session ───────────────────
+router.post("/create", async (req, res, next) => {
   try {
     const { budgetSats = 50000 } = req.body;
 
-    // 1. Create litd account with budget ceiling
+    // Create litd account with budget ceiling
     const account = await litd.createAccount(budgetSats, `aegis-${Date.now()}`);
 
-    // 2. Bake minimal-permission macaroon tied to this account
+    // Bake minimal-permission macaroon tied to this account
     const macaroon = await bakeAgentMacaroon(account.account_id);
 
     res.json({
       ok: true,
-      macaroon,  // minimal permissions + budget ceiling
+      macaroon,
       accountId: account.account_id,
       budgetSats: account.balance_sats,
     });
   } catch (err) { next(err); }
 });
 
-// ── Pair (get pairing config for existing agent) ────────────────────────────
-router.post("/pair", auth, async (req, res, next) => {
+// ── Status — read from litd ────────────────────────────────────────────────
+router.get("/status", async (req, res, next) => {
   try {
-    const agent = getUserAgent(req.user.credentialId);
-    if (!agent) return res.status(404).json({ error: "No agent found. Create one first." });
+    const accounts = await litd.listAccounts();
+    // Find the most recent aegis account
+    const agent = accounts
+      .filter((a) => (a.label || "").startsWith("aegis-"))
+      .sort((a, b) => parseInt(b.last_update || "0") - parseInt(a.last_update || "0"))[0];
 
-    const mcpConfig = {
-      mcpServers: {
-        "aegis-wallet": {
-          command: "node",
-          args: ["backend/src/mcp/server.js", "--token", agent.auth_token],
-        },
-      },
-    };
-
-    res.json({
-      agentId: agent.id,
-      authToken: agent.auth_token,
-      mcpConfig,
-      pairingCommand: `claude mcp add aegis-wallet -- node backend/src/mcp/server.js --token ${agent.auth_token}`,
-    });
-  } catch (err) { next(err); }
-});
-
-// ── Status ──────────────────────────────────────────────────────────────────
-router.get("/status", auth, async (req, res, next) => {
-  try {
-    const agent = getUserAgent(req.user.credentialId);
     if (!agent) return res.json({ agent: null });
 
-    const spentToday = db.getAgentSpendingToday(agent.id);
-    const recentTxs = db.getTransactions(agent.id, 10);
-
-    let balanceSats = agent.budget_sats;
-    if (agent.litd_account_id && !agent.litd_account_id.startsWith("pending")) {
-      try {
-        // Try to get real balance from litd
-        const { default: lndMod } = await import("../services/lnd.js");
-        const bal = await lndMod.getBalance(agent.macaroon_encrypted);
-        balanceSats = bal.balance_sats;
-      } catch {}
-    }
-
+    const balanceSats = parseInt(agent.current_balance || "0");
     res.json({
       agent: {
         id: agent.id,
-        status: agent.status,
-        budgetSats: agent.budget_sats,
+        status: "active",
+        budgetSats: balanceSats,
         balanceSats,
-        spentTodaySats: spentToday.total_sats,
-        createdAt: agent.created_at,
-        recentTransactions: recentTxs,
       },
     });
   } catch (err) { next(err); }
 });
 
-// ── Top-up ──────────────────────────────────────────────────────────────────
-router.post("/topup", auth, async (req, res, next) => {
+// ── Update budget ──────────────────────────────────────────────────────────
+router.post("/budget", async (req, res, next) => {
   try {
-    const { amountSats } = req.body;
-    const agent = getUserAgent(req.user.credentialId);
-    if (!agent) return res.status(404).json({ error: "No agent found" });
-
-    const newBudget = agent.budget_sats + (amountSats || 10000);
-    db.default.prepare("UPDATE agents SET budget_sats = ? WHERE id = ?").run(newBudget, agent.id);
-
-    if (agent.litd_account_id && !agent.litd_account_id.startsWith("pending")) {
-      try {
-        await litd.updateBalance(agent.litd_account_id, newBudget);
-      } catch {}
+    const { budgetSats, accountId } = req.body;
+    if (!budgetSats || !accountId) {
+      return res.status(400).json({ error: "budgetSats and accountId required" });
     }
 
-    emitToUser(req.user.credentialId, "topup_approved", {
-      agent_id: agent.id,
-      new_balance_sats: newBudget,
-    });
-
-    res.json({ ok: true, newBalanceSats: newBudget });
+    await litd.updateBalance(accountId, budgetSats);
+    res.json({ ok: true, budgetSats });
   } catch (err) { next(err); }
 });
 
-// ── Approve payment ─────────────────────────────────────────────────────────
-router.post("/approve", auth, async (req, res, next) => {
-  try {
-    const { requestId, approved } = req.body;
-    if (!requestId) return res.status(400).json({ error: "requestId required" });
-
-    const status = approved !== false ? "approved" : "denied";
-    db.updateApprovalStatus(requestId, status);
-
-    emitToUser(req.user.credentialId, "approval_resolved", {
-      approval_id: requestId,
-      approved: status === "approved",
-    });
-
-    res.json({ ok: true, status });
-  } catch (err) { next(err); }
-});
-
-// ── Pay directly (user pays invoice when agent budget exceeded) ─────────────
-router.post("/pay-direct", auth, async (req, res, next) => {
+// ── Pay directly (user pays when agent budget exceeded) ─────────────────────
+router.post("/pay-direct", async (req, res, next) => {
   try {
     const { bolt11 } = req.body;
     if (!bolt11) return res.status(400).json({ error: "bolt11 required" });
 
-    // Pay using admin macaroon — this is the USER paying, not the agent
     const result = await lndSendPayment(bolt11);
     if (!result.success) {
       return res.status(400).json({ error: `Payment failed: ${result.error}` });
     }
-
-    emitToUser(req.user.credentialId, "payment_completed", {
-      amount_sats: result.amount_sats,
-      fee_sats: result.fee_sats,
-      preimage: result.preimage,
-    });
 
     res.json({
       ok: true,
@@ -181,67 +105,13 @@ router.post("/pay-direct", auth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// ── Pause ───────────────────────────────────────────────────────────────────
-router.post("/pause", auth, async (req, res, next) => {
+// ── Revoke — delete litd account ───────────────────────────────────────────
+router.post("/revoke", async (req, res, next) => {
   try {
-    const agent = getUserAgent(req.user.credentialId);
-    if (!agent) return res.status(404).json({ error: "No agent found" });
+    const { accountId } = req.body;
+    if (!accountId) return res.status(400).json({ error: "accountId required" });
 
-    db.updateAgentStatus(agent.id, "paused");
-    emitToUser(req.user.credentialId, "agent_paused", { agent_id: agent.id, status: "paused" });
-    res.json({ ok: true, status: "paused" });
-  } catch (err) { next(err); }
-});
-
-// ── Resume ──────────────────────────────────────────────────────────────────
-router.post("/resume", auth, async (req, res, next) => {
-  try {
-    const agent = getUserAgent(req.user.credentialId);
-    if (!agent) return res.status(404).json({ error: "No agent found" });
-
-    db.updateAgentStatus(agent.id, "active");
-    emitToUser(req.user.credentialId, "agent_paused", { agent_id: agent.id, status: "active" });
-    res.json({ ok: true, status: "active" });
-  } catch (err) { next(err); }
-});
-
-// ── Update budget (litd account balance) ────────────────────────────────────
-// Changes the cryptographically-enforced budget ceiling.
-// Same macaroon, updated balance — LND checks litd account on each payment.
-router.put("/budget", auth, async (req, res, next) => {
-  try {
-    const { budgetSats } = req.body;
-    if (!budgetSats || budgetSats < 0) {
-      return res.status(400).json({ error: "budgetSats required (positive integer)" });
-    }
-
-    const agent = getUserAgent(req.user.credentialId);
-    if (!agent) return res.status(404).json({ error: "No agent found" });
-
-    // Update litd account — this is the real enforcement
-    const result = await litd.updateBalance(agent.litd_account_id, budgetSats);
-
-    // Update DB for display
-    db.default.prepare("UPDATE agents SET budget_sats = ? WHERE id = ?").run(budgetSats, agent.id);
-
-    res.json({
-      ok: true,
-      budgetSats: result.balance_sats,
-      message: "Budget updated. Same macaroon, new limit — enforced by LND.",
-    });
-  } catch (err) { next(err); }
-});
-
-// ── Revoke agent (delete litd account — macaroon becomes invalid) ───────────
-router.post("/revoke", auth, async (req, res, next) => {
-  try {
-    const agent = getUserAgent(req.user.credentialId);
-    if (!agent) return res.status(404).json({ error: "No agent found" });
-
-    // Delete litd account — any macaroon tied to it instantly stops working
-    await litd.freezeAccount(agent.litd_account_id);
-    db.updateAgentStatus(agent.id, "paused");
-
+    await litd.freezeAccount(accountId);
     res.json({ ok: true, message: "Agent revoked. Macaroon is now invalid." });
   } catch (err) { next(err); }
 });
