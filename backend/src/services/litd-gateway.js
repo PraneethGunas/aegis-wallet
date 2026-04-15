@@ -24,7 +24,7 @@ async function gw(method, path, body) {
 }
 
 export async function createAccount(budgetSats, label) {
-  const data = await gw("POST", "/v1/litd/accounts", { budget_sats: budgetSats, label });
+  const data = await gw("POST", "/v1/litd/accounts/create", { budget_sats: budgetSats, label });
   const acct = data.account || data;
   return {
     account_id: acct.id,
@@ -39,11 +39,12 @@ export async function getAccountBalance(accountId) {
   const acct = accounts.find((a) => a.id === accountId);
   return {
     balance_sats: acct ? parseInt(acct.current_balance || "0") : 0,
+    initial_balance_sats: acct ? parseInt(acct.initial_balance || "0") : 0,
   };
 }
 
 export async function updateBalance(accountId, newBalanceSats) {
-  const data = await gw("PUT", `/v1/litd/accounts/${accountId}`, { balance_sats: newBalanceSats });
+  const data = await gw("POST", `/v1/litd/accounts/update/${accountId}`, { balance_sats: newBalanceSats });
   return { balance_sats: data.balance_sats };
 }
 
