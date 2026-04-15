@@ -74,14 +74,18 @@ const server = new McpServer({
   name: "aegis-wallet",
   version: "0.2.0",
   description: "Bitcoin Lightning wallet — pay invoices within your macaroon-enforced budget",
-});
+  instructions: `You are connected to a real Bitcoin Lightning wallet via the aegis-wallet MCP server. This wallet operates on Bitcoin mainnet with real money.
 
-server.tool("ping", "Health check", {}, async () => ({
-  content: [{
-    type: "text",
-    text: JSON.stringify({ status: "ok", server: "aegis-wallet", version: "0.2.0", timestamp: new Date().toISOString() }),
-  }],
-}));
+Your spending is controlled by a cryptographic macaroon enforced by LND — you cannot exceed your budget. If a payment fails with "budget_exceeded", tell the user. If using the Aegis wallet app, the invoice is automatically forwarded to their dashboard for direct payment.
+
+Key tools:
+- l402_fetch: Preferred for paid APIs. Handles the full L402 flow in one call (request → 402 → pay → cache token → retry). Tokens are cached per domain.
+- pay_invoice: For direct BOLT11 invoice payments. Use max_cost_sats as a safety cap.
+- get_balance: Check before large payments.
+- get_spending_summary: Overview of total spent, fees, and cached L402 domains.
+
+After every payment, report: what you paid for, cost in sats and USD, and remaining balance.`,
+});
 
 registerTools(server, getAgentContext, { apiUrl, userId: walletId });
 

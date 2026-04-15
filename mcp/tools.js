@@ -88,7 +88,7 @@ export function registerTools(server, getAgentContext, opts = {}) {
   // ── 1. pay_invoice ────────────────────────────────────────────────────────
   server.tool(
     "pay_invoice",
-    "Pay a Lightning invoice. Budget enforced by LND. Use max_cost_sats to set a per-payment ceiling (like lnget --max-cost).",
+    "Pay a BOLT11 Lightning invoice with real Bitcoin. Budget enforced cryptographically by LND — exceeding it rejects the payment and notifies the user. Use max_cost_sats to refuse invoices above a threshold. Always decode_invoice first for large amounts. Report cost and remaining balance after payment.",
     {
       bolt11: z.string().describe("BOLT11 invoice string"),
       purpose: z.string().describe("Why this payment is being made"),
@@ -175,7 +175,7 @@ export function registerTools(server, getAgentContext, opts = {}) {
   // ── 2. create_invoice ─────────────────────────────────────────────────────
   server.tool(
     "create_invoice",
-    "Generate a Lightning invoice to receive a payment.",
+    "Generate a BOLT11 Lightning invoice to receive Bitcoin. The payer sends sats to this invoice. Returns bolt11 string and payment_hash.",
     {
       amount_sats: z.number().int().positive().describe("Amount in satoshis"),
       memo: z.string().describe("Description shown to the payer"),
@@ -190,7 +190,7 @@ export function registerTools(server, getAgentContext, opts = {}) {
   // ── 3. get_balance ────────────────────────────────────────────────────────
   server.tool(
     "get_balance",
-    "Check the wallet's current spending balance.",
+    "Check remaining spending balance in sats and USD. Call this before large payments to verify sufficient funds.",
     {},
     wrapTool(async () => {
       getAgentContext();
@@ -206,7 +206,7 @@ export function registerTools(server, getAgentContext, opts = {}) {
   // ── 4. decode_invoice ─────────────────────────────────────────────────────
   server.tool(
     "decode_invoice",
-    "Decode a BOLT11 invoice to see amount, description, and expiry.",
+    "Decode a BOLT11 invoice to inspect amount, description, destination, and expiry before paying. Use this to verify cost before committing.",
     {
       bolt11: z.string().describe("BOLT11 invoice string"),
     },
@@ -225,7 +225,7 @@ export function registerTools(server, getAgentContext, opts = {}) {
   // ── 5. list_payments ──────────────────────────────────────────────────────
   server.tool(
     "list_payments",
-    "List recent payment history.",
+    "List recent payment history with amounts, fees, status, and timestamps.",
     {
       limit: z.number().int().min(1).max(50).default(10).describe("Number of payments to return"),
     },
@@ -245,7 +245,7 @@ export function registerTools(server, getAgentContext, opts = {}) {
   // ── 6. l402_fetch — automatic L402 payment flow (lnget-style) ────────────
   server.tool(
     "l402_fetch",
-    "Fetch a URL with automatic L402 payment. If the server returns 402, this tool extracts the invoice, pays it, and retries with the L402 auth header. Caches tokens per domain to avoid re-payment. Like lnget but as an MCP tool.",
+    "Fetch a URL with automatic L402 Lightning payment. If the server returns HTTP 402, this tool extracts the invoice from the WWW-Authenticate header, pays it, caches the token per domain, and retries with the L402 auth header — all in one call. Preferred over manual pay_invoice for paid APIs. Use no_cache=true for demos to force fresh payment. Use max_cost_sats as a safety cap.",
     {
       url: z.string().describe("URL to fetch"),
       method: z.enum(["GET", "POST", "PUT", "DELETE"]).default("GET").describe("HTTP method"),
@@ -421,7 +421,7 @@ export function registerTools(server, getAgentContext, opts = {}) {
   // ── 7. get_spending_summary — total spent + remaining budget ─────────────
   server.tool(
     "get_spending_summary",
-    "Get a summary of spending: total paid, number of payments, remaining balance, and cached L402 tokens.",
+    "Get a full spending overview: total sats spent, total fees, payment count, remaining balance (sats + USD), and list of cached L402 domains (where tokens are reusable).",
     {},
     wrapTool(async () => {
       getAgentContext();
