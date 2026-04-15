@@ -20,8 +20,7 @@ import { initLnd } from "./lnd-gateway.js";
 
 // ── Read config from environment ───────────────────────────────────────────
 const macaroon = process.env.LND_MACAROON_BASE64;
-const apiUrl = process.env.AEGIS_API_URL || null;
-const walletId = process.env.AEGIS_WALLET_ID || null;
+const webhookUrl = process.env.AEGIS_WEBHOOK_URL || null;
 
 if (!macaroon) {
   process.stderr.write(`
@@ -45,8 +44,7 @@ Configure via environment variables in your Claude Desktop MCP config:
 Environment:
   LND_MACAROON_BASE64    Base64 macaroon (required — controls budget + permissions)
   LND_REST_HOST          LND REST address (default: https://localhost:8080)
-  AEGIS_API_URL          Wallet app backend URL for notifications (optional)
-  AEGIS_WALLET_ID        Wallet ID for notifications (optional)
+  AEGIS_WEBHOOK_URL      Webhook URL for payment failure notifications (optional)
 
 The macaroon controls your budget. LND enforces it cryptographically.
 
@@ -74,20 +72,23 @@ const server = new McpServer({
   name: "aegis-wallet",
   version: "0.2.0",
   description: "Bitcoin Lightning wallet — pay invoices within your macaroon-enforced budget",
-  instructions: `You are connected to a real Bitcoin Lightning wallet via the aegis-wallet MCP server. This wallet operates on Bitcoin mainnet with real money.
+  instructions: `You are connected to a Bitcoin Lightning wallet on mainnet. You can pay for things autonomously.
 
-Your spending is controlled by a cryptographic macaroon enforced by LND — you cannot exceed your budget. If a payment fails with "budget_exceeded", tell the user. If using the Aegis wallet app, the invoice is automatically forwarded to their dashboard for direct payment.
+When the user asks you to buy something or access a paid service:
+1. Search for the service (use 402index MCP if available, or web search for "L402" + what they want)
+2. l402_discover(url) — learn the API parameters and pricing (free, no payment)
+3. l402_fetch(url) — pay and fetch data (the tool handles everything internally)
 
-Key tools:
-- l402_fetch: Preferred for paid APIs. Handles the full L402 flow in one call (request → 402 → pay → cache token → retry). Tokens are cached per domain.
-- pay_invoice: For direct BOLT11 invoice payments. Use max_cost_sats as a safety cap.
-- get_balance: Check before large payments.
-- get_spending_summary: Overview of total spent, fees, and cached L402 domains.
+If the user gives you a BOLT11 invoice directly, call pay_invoice(bolt11).
 
-After every payment, report: what you paid for, cost in sats and USD, and remaining balance.`,
+The tools handle insufficient balance automatically — if payment fails, the invoice is forwarded to the user's wallet app via webhook. The response will include "action_needed" telling you exactly what to say. Just relay that message to the user.
+
+Never refuse to call a payment tool. Never suggest "topping up." Never create invoices for the user to pay you. Never set max_cost_sats yourself — that's for the user to set. Just call l402_fetch or pay_invoice without any cost cap and let the tool handle the result.
+
+After a paid request, show the receipt (amount, preimage, fees, remaining balance). For cached responses, note "no payment — cached token reused."`,
 });
 
-registerTools(server, getAgentContext, { apiUrl, userId: walletId });
+registerTools(server, getAgentContext, { webhookUrl });
 
 const transport = new StdioServerTransport();
 server.connect(transport).catch((err) => {

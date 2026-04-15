@@ -61,9 +61,7 @@ export async function sendPayment(bolt11) {
     });
 
     if (data.payment_error) {
-      const err = data.payment_error;
-      const budgetExceeded = /insufficient|account|budget/i.test(err);
-      return { success: false, error: err, budget_exceeded: budgetExceeded };
+      return { success: false, error: data.payment_error };
     }
 
     const { balance_sats } = await getBalance();
@@ -71,13 +69,13 @@ export async function sendPayment(bolt11) {
       success: true,
       amount_sats: parseInt(data.payment_route?.total_amt || "0"),
       fee_sats: parseInt(data.payment_route?.total_fees || "0"),
-      preimage: data.payment_preimage || "",
+      preimage: data.payment_preimage
+        ? Buffer.from(data.payment_preimage, "base64").toString("hex")
+        : "",
       balance_remaining_sats: balance_sats,
     };
   } catch (err) {
-    const msg = err.message || String(err);
-    const budgetExceeded = /insufficient|account|budget/i.test(msg);
-    return { success: false, error: msg, budget_exceeded: budgetExceeded };
+    return { success: false, error: err.message || String(err) };
   }
 }
 
