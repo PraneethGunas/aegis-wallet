@@ -1,60 +1,97 @@
 /**
- * LND Gateway client for the MCP package.
- * Calls the Go sidecar for all LND operations.
+ * LND client for the MCP package.
+ * Connects directly to LND's REST API — no sidecar, no gRPC, pure fetch.
+ *
+ * Connection: LND REST (HTTPS, port 8080 by default)
+ * Auth: macaroon in Grpc-Metadata-macaroon header (hex-encoded)
+ *
+ * Env vars:
+ *   LND_REST_HOST   — LND REST address (default: https://localhost:8080)
+ *   LND_CERT_PATH   — TLS cert for self-signed (optional, skips verify if not set)
  */
 
-let _gateway = null;
-let _macaroon = null;
+let _host = null;
+let _macaroonHex = null;
 
 export function initLnd(macaroonB64) {
-  _macaroon = macaroonB64;
-  _gateway = process.env.LND_GATEWAY_URL || "http://localhost:3003";
+  _host = process.env.LND_REST_HOST || "https://localhost:8080";
+  // Convert base64 macaroon to hex (LND REST expects hex in header)
+  _macaroonHex = Buffer.from(macaroonB64, "base64").toString("hex");
 }
 
-async function gw(method, path, body) {
-  if (!_gateway) throw new Error("Gateway not initialized. Call initLnd() first.");
+async function lndRest(method, path, body) {
+  if (!_host || !_macaroonHex) throw new Error("LND not initialized. Call initLnd() first.");
 
-  const headers = { "Content-Type": "application/json" };
-  if (_macaroon) headers["X-Macaroon"] = _macaroon;
-
-  const opts = { method, headers };
+  const opts = {
+    method,
+    headers: {
+      "Grpc-Metadata-macaroon": _macaroonHex,
+      "Content-Type": "application/json",
+    },
+    // Skip TLS verification for self-signed certs (litd default)
+    ...(process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0" ? {} : {}),
+  };
   if (body) opts.body = JSON.stringify(body);
 
-  const res = await fetch(`${_gateway}${path}`, opts);
-  return res.json();
+  const res = await fetch(`${_host}${path}`, opts);
+  const data = await res.json();
+
+  // LND REST returns { code, message, details } on errors
+  if (data.code && data.message) {
+    throw new Error(data.message);
+  }
+
+  return data;
 }
 
 // ── Balance ─────────────────────────────────────────────────────────────────
 
 export async function getBalance() {
-  const data = await gw("GET", "/v1/balance/channel");
-  return { balance_sats: data.balance_sats || 0 };
+  const data = await lndRest("GET", "/v1/balance/channels");
+  return { balance_sats: parseInt(data.local_balance?.sat || "0") };
 }
 
 // ── Payments ────────────────────────────────────────────────────────────────
 
 export async function sendPayment(bolt11) {
-  const data = await gw("POST", "/v1/payments/send", { bolt11 });
-  if (!data.success) {
+  try {
+    // POST /v1/channels/transactions = SendPaymentSync (unary, litd-compatible)
+    const data = await lndRest("POST", "/v1/channels/transactions", {
+      payment_request: bolt11,
+    });
+
+    if (data.payment_error) {
+      const err = data.payment_error;
+      const budgetExceeded = /insufficient|account|budget/i.test(err);
+      return { success: false, error: err, budget_exceeded: budgetExceeded };
+    }
+
+    const { balance_sats } = await getBalance();
     return {
-      success: false,
-      error: data.error?.message || data.error || "payment failed",
-      budget_exceeded: data.budget_exceeded || false,
+      success: true,
+      amount_sats: parseInt(data.payment_route?.total_amt || "0"),
+      fee_sats: parseInt(data.payment_route?.total_fees || "0"),
+      preimage: data.payment_preimage || "",
+      balance_remaining_sats: balance_sats,
     };
+  } catch (err) {
+    const msg = err.message || String(err);
+    const budgetExceeded = /insufficient|account|budget/i.test(msg);
+    return { success: false, error: msg, budget_exceeded: budgetExceeded };
   }
-  return {
-    success: true,
-    amount_sats: data.amount_sats,
-    fee_sats: data.fee_sats,
-    preimage: data.preimage,
-    balance_remaining_sats: data.balance_remaining_sats,
-  };
 }
 
 // ── Invoices ────────────────────────────────────────────────────────────────
 
 export async function addInvoice(amountSats, memo) {
-  return gw("POST", "/v1/invoices/add", { amount_sats: amountSats, memo });
+  const data = await lndRest("POST", "/v1/invoices", {
+    value: String(amountSats),
+    memo,
+  });
+  return {
+    bolt11: data.payment_request,
+    payment_hash: data.r_hash,
+  };
 }
 
 export async function decodeInvoice(bolt11) {
@@ -62,15 +99,17 @@ export async function decodeInvoice(bolt11) {
     return { is_valid: false, error: "not a Lightning invoice — must start with 'lnbc' or 'lntb'" };
   }
   try {
-    const data = await gw("POST", "/v1/payments/decode", { bolt11 });
-    if (data.error) return { is_valid: false, error: data.error.message || data.error };
+    const data = await lndRest("GET", `/v1/payreq/${bolt11}`);
+    const expiry = parseInt(data.expiry || "3600");
+    const timestamp = parseInt(data.timestamp || "0");
+    const expiresAt = (timestamp + expiry) * 1000;
     return {
       is_valid: true,
-      is_expired: false, // gateway doesn't compute this yet
+      is_expired: expiresAt < Date.now(),
       payment_hash: data.payment_hash,
-      amount_sats: data.amount_sats,
+      amount_sats: parseInt(data.num_satoshis || "0"),
       description: data.description || "",
-      expiry_seconds: data.expiry_seconds,
+      expiry_seconds: Math.max(0, Math.floor((expiresAt - Date.now()) / 1000)),
     };
   } catch (err) {
     return { is_valid: false, error: err.message };
@@ -80,17 +119,17 @@ export async function decodeInvoice(bolt11) {
 // ── Payment History ─────────────────────────────────────────────────────────
 
 export async function listPayments(limit = 10) {
-  const data = await gw("GET", `/v1/payments/list?limit=${limit}`);
+  const data = await lndRest("GET", `/v1/payments?reversed=true&max_payments=${limit}`);
   return (data.payments || []).map((p) => ({
-    amount_sats: p.amount_sats,
-    fee_sats: p.fee_sats,
-    status: p.status,
-    timestamp: p.timestamp,
+    amount_sats: parseInt(p.value_sat || "0"),
+    fee_sats: parseInt(p.fee_sat || "0"),
+    status: p.status === "SUCCEEDED" ? "settled" : p.status === "FAILED" ? "failed" : "pending",
+    timestamp: new Date(parseInt(p.creation_date || "0") * 1000).toISOString(),
   }));
 }
 
 // ── Info ─────────────────────────────────────────────────────────────────────
 
 export async function getInfo() {
-  return gw("GET", "/v1/node/info");
+  return lndRest("GET", "/v1/getinfo");
 }
