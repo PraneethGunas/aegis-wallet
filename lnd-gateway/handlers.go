@@ -39,9 +39,9 @@ func registerHandlers(mux *http.ServeMux, lnd *LNDConn, litd *LitdClient) {
 
 	// litd accounts
 	if litd != nil {
-		mux.HandleFunc("POST /v1/litd/accounts", handleCreateAccount(litd))
+		mux.HandleFunc("POST /v1/litd/accounts/create", handleCreateAccount(litd))
 		mux.HandleFunc("GET /v1/litd/accounts", handleListAccounts(litd))
-		mux.HandleFunc("PUT /v1/litd/accounts/", handleUpdateBalance(litd))
+		mux.HandleFunc("POST /v1/litd/accounts/update/", handleUpdateBalance(litd))
 		mux.HandleFunc("DELETE /v1/litd/accounts/", handleFreezeAccount(litd))
 	}
 }

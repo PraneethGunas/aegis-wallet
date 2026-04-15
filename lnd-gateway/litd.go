@@ -105,7 +105,7 @@ func (c *LitdClient) ListAccounts() ([]map[string]interface{}, error) {
 
 // UpdateBalance changes the budget ceiling for an account.
 func (c *LitdClient) UpdateBalance(accountID string, newBalanceSats int64) error {
-	_, err := c.request("PUT", "/v1/accounts/"+accountID, map[string]interface{}{
+	_, err := c.request("POST", "/v1/accounts/"+accountID, map[string]interface{}{
 		"account_balance": fmt.Sprintf("%d", newBalanceSats),
 	})
 	return err
