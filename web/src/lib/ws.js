@@ -13,7 +13,7 @@
  * Auto-reconnects on disconnect with exponential backoff.
  */
 
-import { getAuthToken } from "./api";
+// No auth needed — user's own node
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:3001/ws";
 
@@ -33,8 +33,7 @@ export function connect() {
   // Clean up existing socket
   cleanup();
 
-  const token = getAuthToken();
-  const url = token ? `${WS_URL}?token=${encodeURIComponent(token)}` : WS_URL;
+  const url = WS_URL;
 
   try {
     socket = new WebSocket(url);

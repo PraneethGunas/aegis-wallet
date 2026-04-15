@@ -1,76 +1,28 @@
 /**
- * REST API client for Aegis backend
- *
- * Base URL from NEXT_PUBLIC_API_URL env var
- * Auto-attaches auth token from session
- * Handles 401 by clearing session (caller re-authenticates)
+ * REST API client for Aegis backend.
+ * No auth — user's own node, macaroon is the credential.
  */
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
-let authToken = null;
-
-/**
- * Set the auth token (called after passkey authentication).
- */
-export function setAuthToken(token) {
-  authToken = token;
-  if (token) {
-    sessionStorage.setItem("aegis_auth_token", token);
-  } else {
-    sessionStorage.removeItem("aegis_auth_token");
-  }
-}
-
-/**
- * Get the current auth token (restores from sessionStorage if needed).
- */
-export function getAuthToken() {
-  if (!authToken) {
-    authToken = sessionStorage.getItem("aegis_auth_token");
-  }
-  return authToken;
-}
-
-/**
- * Core request helper with auth and error handling.
- */
 async function request(path, options = {}) {
-  const token = getAuthToken();
   const headers = {
     "Content-Type": "application/json",
     ...options.headers,
   };
 
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
-
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...options,
-    headers,
-  });
-
-  if (res.status === 401) {
-    // Clear stale token — caller should re-authenticate
-    setAuthToken(null);
-    throw new ApiError("Session expired. Please authenticate again.", 401);
-  }
+  const res = await fetch(`${BASE_URL}${path}`, { ...options, headers });
 
   if (!res.ok) {
     let message = `API error: ${res.status}`;
     try {
       const body = await res.json();
       if (body.error) message = body.error;
-    } catch {
-      // Response wasn't JSON
-    }
+    } catch {}
     throw new ApiError(message, res.status);
   }
 
-  // Handle 204 No Content
   if (res.status === 204) return null;
-
   return res.json();
 }
 
@@ -82,122 +34,41 @@ export class ApiError extends Error {
   }
 }
 
-// Wallet endpoints
+// Wallet
 export const wallet = {
-  create: (walletId, signingPubKey) =>
-    request("/wallet/create", {
-      method: "POST",
-      body: JSON.stringify({ walletId, signingPubKey }),
-    }),
-
-  prove: (walletId, sig, timestamp) =>
-    request("/wallet/prove", {
-      method: "POST",
-      body: JSON.stringify({ walletId, sig, timestamp }),
-    }),
-
-  getBalance: (address) => {
-    const params = address ? `?address=${encodeURIComponent(address)}` : "";
-    return request(`/wallet/balance${params}`);
-  },
-
   getL2Balance: () => request("/wallet/l2-balance"),
-
   getBtcPrice: () => request("/wallet/btc-price"),
-
-  getHistory: (limit = 20, address) => {
-    const params = new URLSearchParams({ limit });
-    if (address) params.set("address", address);
-    return request(`/wallet/history?${params}`);
-  },
-
-  send: (payload) =>
-    request("/wallet/send", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-
-  receive: (type, options = {}) =>
-    request("/wallet/receive", {
-      method: "POST",
-      body: JSON.stringify({ type, ...options }),
-    }),
-
+  getHistory: (limit = 200) => request(`/wallet/history?limit=${limit}`),
+  receive: (amount_sats, memo) =>
+    request("/wallet/receive", { method: "POST", body: JSON.stringify({ amount_sats, memo }) }),
   getFundingAddress: () => request("/wallet/funding-address"),
-
-  getUtxos: (address) => {
-    const params = address ? `?address=${encodeURIComponent(address)}` : "";
-    return request(`/wallet/utxos${params}`);
-  },
 };
 
-// Agent endpoints
+// Agent
 export const agent = {
   create: (budgetSats) =>
-    request("/agent/create", {
-      method: "POST",
-      body: JSON.stringify({ budgetSats }),
-    }),
-
-  pair: () => request("/agent/pair", { method: "POST" }),
-
-  topup: (amountSats) =>
-    request("/agent/topup", {
-      method: "POST",
-      body: JSON.stringify({ amountSats }),
-    }),
-
-  pause: () => request("/agent/pause", { method: "POST" }),
-
-  resume: () => request("/agent/resume", { method: "POST" }),
-
+    request("/agent/create", { method: "POST", body: JSON.stringify({ budgetSats }) }),
   status: () => request("/agent/status"),
-
-  approve: (requestId, approved) =>
-    request("/agent/approve", {
-      method: "POST",
-      body: JSON.stringify({ requestId, approved }),
-    }),
-
-  updateBudget: (budgetSats) =>
-    request("/agent/budget", {
-      method: "PUT",
-      body: JSON.stringify({ budgetSats }),
-    }),
-
+  updateBudget: (budgetSats, accountId) =>
+    request("/agent/budget", { method: "POST", body: JSON.stringify({ budgetSats, accountId }) }),
   payDirect: (bolt11) =>
-    request("/agent/pay-direct", {
-      method: "POST",
-      body: JSON.stringify({ bolt11 }),
-    }),
-
-  revoke: () =>
-    request("/agent/revoke", { method: "POST" }),
+    request("/agent/pay-direct", { method: "POST", body: JSON.stringify({ bolt11 }) }),
+  getPendingInvoices: () => request("/agent/webhook/pending"),
+  clearPendingInvoice: (bolt11) =>
+    request("/agent/webhook/clear", { method: "POST", body: JSON.stringify({ bolt11 }) }),
+  revoke: (accountId) =>
+    request("/agent/revoke", { method: "POST", body: JSON.stringify({ accountId }) }),
 };
 
-// Lightning endpoints
+// Lightning
 export const ln = {
   fund: (psbtHex) =>
-    request("/ln/fund", {
-      method: "POST",
-      body: JSON.stringify({ psbtHex }),
-    }),
-
+    request("/ln/fund", { method: "POST", body: JSON.stringify({ psbtHex }) }),
   withdraw: (address, amountSats) =>
-    request("/ln/withdraw", {
-      method: "POST",
-      body: JSON.stringify({ address, amountSats }),
-    }),
-
+    request("/ln/withdraw", { method: "POST", body: JSON.stringify({ address, amountSats }) }),
   getDepositAddress: () => request("/ln/deposit-address"),
-
   openChannel: (amountSats) =>
-    request("/ln/open-channel", {
-      method: "POST",
-      body: JSON.stringify({ amountSats }),
-    }),
-
+    request("/ln/open-channel", { method: "POST", body: JSON.stringify({ amountSats }) }),
   getChannels: () => request("/ln/channels"),
-
   getNodeStatus: () => request("/ln/status"),
 };

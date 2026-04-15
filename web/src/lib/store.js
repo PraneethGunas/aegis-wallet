@@ -12,7 +12,7 @@ import * as passkey from "./passkey";
 import * as bitcoin from "./bitcoin";
 import * as mempool from "./mempool";
 import * as api from "./api";
-import * as ws from "./ws";
+// WebSocket removed — no server-side push needed for self-custodial wallet
 
 const WalletContext = createContext(null);
 
@@ -40,10 +40,13 @@ const initialState = {
 
   // Agent
   agent: {
+    id: null,
     isPaired: false,
     isActive: false,
     budgetSats: 0,
+    balanceSats: 0,
     spentSats: 0,
+    macaroon: null,
     connectedSince: null,
   },
 
@@ -130,41 +133,17 @@ export function WalletProvider({ children }) {
 
   // --- Auth Actions ---
 
-  // ── Prove wallet ownership to backend (register pubkey + sign proof) ───────
-  async function proveWallet(walletId) {
-    const signingPubKey = bitcoin.getAuthPublicKey();
-    const timestamp = new Date().toISOString();
-    const sig = bitcoin.signProof(walletId, timestamp);
-
-    // Register/migrate signing pubkey (idempotent)
-    await api.wallet.create(walletId, signingPubKey);
-
-    // Prove ownership → get session token
-    const result = await api.wallet.prove(walletId, sig, timestamp);
-    if (result?.token) api.setAuthToken(result.token);
-  }
-
   const createWallet = useCallback(async () => {
     try {
       dispatch({ type: "CLEAR_ERROR" });
 
-      // Guard: if wallet exists, authenticate instead of creating a new one
       if (passkey.hasExistingWallet()) {
         return authenticate();
       }
 
       const { credentialId, entropy } = await passkey.createWallet();
-
-      // Derive keys from PRF entropy (deterministic: same entropy = same keys always)
       const { fundingKey } = bitcoin.deriveKeys(entropy);
       const fundingAddress = bitcoin.getFundingAddress(fundingKey);
-
-      // Register signing pubkey + prove ownership → get session token
-      try {
-        await proveWallet(credentialId);
-      } catch {
-        // Backend offline — L1 still works without it
-      }
 
       localStorage.setItem("aegis_funding_address", fundingAddress);
 
@@ -174,7 +153,7 @@ export function WalletProvider({ children }) {
         fundingAddress,
       });
 
-      ws.connect();
+
       return { credentialId, fundingAddress };
     } catch (err) {
       dispatch({ type: "SET_ERROR", error: err.message });
@@ -191,13 +170,6 @@ export function WalletProvider({ children }) {
       const { fundingKey } = bitcoin.deriveKeys(entropy);
       const fundingAddress = bitcoin.getFundingAddress(fundingKey);
 
-      // Prove wallet ownership → get session token
-      try {
-        await proveWallet(credentialId);
-      } catch (err) {
-        console.warn("Backend auth failed:", err.message);
-      }
-
       localStorage.setItem("aegis_funding_address", fundingAddress);
 
       dispatch({
@@ -206,7 +178,7 @@ export function WalletProvider({ children }) {
         fundingAddress,
       });
 
-      ws.connect();
+
       return { credentialId, fundingAddress };
     } catch (err) {
       dispatch({ type: "SET_ERROR", error: err.message });
@@ -238,19 +210,13 @@ export function WalletProvider({ children }) {
       passkey.confirmRecovery(credentialId);
       localStorage.setItem("aegis_funding_address", fundingAddress);
 
-      try {
-        await proveWallet(credentialId);
-      } catch (err) {
-        console.warn("Backend auth failed:", err.message);
-      }
-
       dispatch({
         type: "SET_AUTHENTICATED",
         credentialId,
         fundingAddress,
       });
 
-      ws.connect();
+
       return { credentialId, fundingAddress };
     } catch (err) {
       dispatch({ type: "SET_ERROR", error: err.message });
@@ -261,19 +227,32 @@ export function WalletProvider({ children }) {
   const logout = useCallback(() => {
     bitcoin.discardKeys();
     passkey.clearCredential();
-    api.setAuthToken(null);
     localStorage.removeItem("aegis_funding_address");
     localStorage.removeItem("aegis_cached_balance");
-    ws.disconnect();
+
     dispatch({ type: "LOGOUT" });
   }, []);
 
   // --- Data Fetching ---
 
-  const fetchBalance = useCallback(async () => {
+  // ── Sync: fetches everything in one call ──────────────────────────────────
+  // 1. BTC price (needed for USD conversion)
+  // 2. L1 balance (mempool.space, direct from browser)
+  // 3. L2 balance (LND via backend)
+  // 4. Agent/account status (litd via backend)
+  // 5. Transaction history (LND via backend)
+  const syncWallet = useCallback(async () => {
     dispatch({ type: "SET_LOADING", key: "balance", value: true });
     try {
-      // L1: query mempool.space directly from browser (no backend needed)
+      // 1. BTC price first — everything else needs it
+      let price = state.btcPrice;
+      try {
+        const priceData = await api.wallet.getBtcPrice();
+        price = priceData.btcPrice || price || 0;
+        if (price) dispatch({ type: "SET_BTC_PRICE", price });
+      } catch {}
+
+      // 2 + 3 + 4 + 5 in parallel
       let addresses;
       try {
         addresses = bitcoin.getAllFundingAddresses();
@@ -282,33 +261,20 @@ export function WalletProvider({ children }) {
         addresses = cached ? [cached] : [];
       }
 
-      // L1 + L2 in parallel (BTC price from store, fetched separately)
-      const [l1Result, l2Result] = await Promise.allSettled([
+      const [l1Result, l2Result, agentResult, txResult, pendingResult] = await Promise.allSettled([
         addresses.length > 0
           ? mempool.getMultiAddressBalance(addresses)
           : Promise.resolve({ confirmed_sats: 0, unconfirmed_sats: 0 }),
-        api.getAuthToken()
-          ? api.wallet.getL2Balance().catch(() => ({ l2Sats: 0 }))
-          : Promise.resolve({ l2Sats: 0 }),
+        api.wallet.getL2Balance().catch(() => ({ l2Sats: 0 })),
+        api.agent.status().catch(() => ({ agent: null })),
+        api.wallet.getHistory(200).catch(() => ({ transactions: [] })),
+        api.agent.getPendingInvoices().catch(() => ({ invoices: [] })),
       ]);
 
+      // L1 + L2 balance
       const l1Sats = l1Result.status === "fulfilled" ? l1Result.value.confirmed_sats : 0;
       const l1Unconfirmed = l1Result.status === "fulfilled" ? l1Result.value.unconfirmed_sats : 0;
       const l2Sats = l2Result.status === "fulfilled" ? (l2Result.value.l2Sats ?? 0) : 0;
-
-      // Get price — use store value, or fetch fresh if not available yet
-      let price = state.btcPrice;
-      if (!price) {
-        try {
-          const priceData = await api.wallet.getBtcPrice();
-          price = priceData.btcPrice || 0;
-          if (price) dispatch({ type: "SET_BTC_PRICE", price });
-        } catch {
-          price = 0;
-        }
-      }
-
-
       const totalSats = l1Sats + l2Sats;
 
       const balance = {
@@ -320,61 +286,82 @@ export function WalletProvider({ children }) {
         totalUsd: +((totalSats / 1e8) * price).toFixed(2),
         totalBtc: +(totalSats / 1e8).toFixed(8),
       };
-
       dispatch({ type: "SET_BALANCE", balance });
+
+      // Agent status
+      if (agentResult.status === "fulfilled") {
+        const a = agentResult.value.agent;
+        dispatch({
+          type: "SET_AGENT",
+          agent: {
+            id: a?.id ?? null,
+            isPaired: !!a,
+            isActive: a?.status === "active",
+            budgetSats: a?.budgetSats ?? 0,
+            balanceSats: a?.balanceSats ?? 0,
+            spentSats: a?.spentTodaySats ?? 0,
+            macaroon: a?.macaroon ?? null,
+            connectedSince: a?.createdAt ?? null,
+          },
+        });
+      }
+
+      // Transactions
+      if (txResult.status === "fulfilled") {
+        dispatch({
+          type: "SET_TRANSACTIONS",
+          transactions: txResult.value.transactions ?? [],
+        });
+      }
+
+      // Pending invoices (from webhook — agent payment failures)
+      if (pendingResult.status === "fulfilled") {
+        const invoices = pendingResult.value.invoices || [];
+        if (invoices.length > 0) {
+          const latest = invoices[invoices.length - 1];
+          dispatch({
+            type: "SET_PENDING_APPROVAL",
+            approval: {
+              type: "payment",
+              bolt11: latest.bolt11,
+              amountSats: latest.amount_sats,
+              reason: latest.description || latest.error || "Agent payment failed",
+            },
+          });
+        }
+      }
 
       // Cache for next load
       try {
         localStorage.setItem("aegis_cached_balance", JSON.stringify({
-          ...balance,
-          btcPrice: price,
-          ts: Date.now(),
+          ...balance, btcPrice: price, ts: Date.now(),
         }));
       } catch {}
     } catch (err) {
-      if (err.status !== 401) {
-        dispatch({ type: "SET_ERROR", error: err.message });
-      }
+      dispatch({ type: "SET_ERROR", error: err.message });
     } finally {
       dispatch({ type: "SET_LOADING", key: "balance", value: false });
     }
-  }, []);
+  }, [state.btcPrice]);
 
-  const fetchTransactions = useCallback(async () => {
-    dispatch({ type: "SET_LOADING", key: "transactions", value: true });
-    try {
-      let addresses;
-      try {
-        addresses = bitcoin.getAllFundingAddresses().join(",");
-      } catch {
-        addresses = localStorage.getItem("aegis_funding_address") || "";
-      }
-      const data = await api.wallet.getHistory(200, addresses);
-      dispatch({
-        type: "SET_TRANSACTIONS",
-        transactions: data.transactions ?? [],
-      });
-    } catch (err) {
-      if (err.status !== 401) {
-        dispatch({ type: "SET_ERROR", error: err.message });
-      }
-    } finally {
-      dispatch({ type: "SET_LOADING", key: "transactions", value: false });
-    }
-  }, []);
-
+  // Keep old names as aliases so dashboard doesn't break
+  const fetchBalance = syncWallet;
+  const fetchTransactions = syncWallet;
   const fetchAgentStatus = useCallback(async () => {
-    dispatch({ type: "SET_LOADING", key: "agent", value: true });
     try {
       const data = await api.agent.status();
+      const a = data.agent;
       dispatch({
         type: "SET_AGENT",
         agent: {
-          isPaired: data.isPaired ?? false,
-          isActive: data.isActive ?? false,
-          budgetSats: data.budgetSats ?? 0,
-          spentSats: data.spentSats ?? 0,
-          connectedSince: data.connectedSince ?? null,
+          id: a?.id ?? null,
+          isPaired: !!a,
+          isActive: a?.status === "active",
+          budgetSats: a?.budgetSats ?? 0,
+          balanceSats: a?.balanceSats ?? 0,
+          spentSats: a?.spentTodaySats ?? 0,
+          macaroon: a?.macaroon ?? null,
+          connectedSince: a?.createdAt ?? null,
         },
       });
     } catch (err) {
@@ -386,16 +373,6 @@ export function WalletProvider({ children }) {
     }
   }, []);
 
-  const fetchBtcPrice = useCallback(async () => {
-    try {
-      const data = await api.wallet.getBtcPrice();
-      if (data.btcPrice) {
-        dispatch({ type: "SET_BTC_PRICE", price: data.btcPrice });
-      }
-    } catch {
-      // Keep fallback price
-    }
-  }, []);
 
   // --- Agent Actions ---
 
@@ -432,14 +409,14 @@ export function WalletProvider({ children }) {
       dispatch({ type: "CLEAR_PENDING_APPROVAL" });
       try {
         const result = await api.agent.payDirect(bolt11);
-        fetchBalance();
-        fetchTransactions();
+        await api.agent.clearPendingInvoice(bolt11).catch(() => {});
+        syncWallet();
         return result;
       } catch (err) {
         dispatch({ type: "SET_ERROR", error: `Payment failed: ${err.message}` });
       }
     },
-    [fetchBalance, fetchTransactions]
+    [syncWallet]
   );
 
   const pauseAgent = useCallback(async () => {
@@ -529,96 +506,13 @@ export function WalletProvider({ children }) {
     dispatch({ type: "RESET_FUNDING" });
   }, []);
 
-  // --- WebSocket Event Handlers ---
-
-  useEffect(() => {
-    const unsubs = [
-      ws.on("balance_updated", (data) => {
-        dispatch({
-          type: "SET_BALANCE",
-          balance: {
-            l1Sats: data.l1Sats,
-            l2Sats: data.l2Sats,
-            l1Usd: data.l1Usd,
-            l2Usd: data.l2Usd,
-            totalUsd: data.totalUsd,
-            totalBtc: data.totalBtc,
-          },
-        });
-      }),
-
-      ws.on("payment_made", () => {
-        // Refresh transactions and balance
-        fetchBalance();
-        fetchTransactions();
-      }),
-
-      ws.on("approval_requested", (data) => {
-        dispatch({ type: "SET_PENDING_APPROVAL", approval: data });
-      }),
-
-      ws.on("approval_resolved", () => {
-        dispatch({ type: "CLEAR_PENDING_APPROVAL" });
-        fetchBalance();
-      }),
-
-      ws.on("payment_failed", (data) => {
-        dispatch({
-          type: "SET_PENDING_APPROVAL",
-          approval: {
-            type: "payment",
-            bolt11: data.bolt11,
-            amountSats: data.amount_sats,
-            reason: data.purpose || data.description || "Agent's budget exceeded",
-            expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-          },
-        });
-      }),
-
-      ws.on("payment_completed", () => {
-        dispatch({ type: "CLEAR_PENDING_APPROVAL" });
-        fetchBalance();
-        fetchTransactions();
-      }),
-
-      ws.on("topup_requested", (data) => {
-        dispatch({
-          type: "SET_PENDING_APPROVAL",
-          approval: { ...data, type: "topup" },
-        });
-      }),
-
-      ws.on("topup_approved", () => {
-        dispatch({ type: "CLEAR_PENDING_APPROVAL" });
-        fetchAgentStatus();
-        fetchBalance();
-      }),
-
-      ws.on("agent_paused", () => {
-        dispatch({ type: "SET_AGENT", agent: { isActive: false } });
-      }),
-
-      ws.on("channel_opening", () => {
-        dispatch({ type: "SET_FUNDING_STEP", funding: { step: "opening_channel" } });
-      }),
-
-      ws.on("channel_confirmed", () => {
-        dispatch({ type: "SET_FUNDING_STEP", funding: { step: "ready" } });
-        fetchBalance();
-      }),
-    ];
-
-    return () => unsubs.forEach((unsub) => unsub());
-  }, [fetchBalance, fetchTransactions, fetchAgentStatus]);
-
-  // Restore session on mount — re-auth via passkey to reload keys into memory
-  // Skip on landing page (/) — user will auth through onboarding buttons
+  // Restore session on mount — use cached address, no passkey prompt
+  // Passkey only needed when signing transactions (L1 sends)
   useEffect(() => {
     const credentialId = passkey.getCredentialId();
     const isLandingPage = typeof window !== "undefined" && window.location.pathname === "/";
 
     if (credentialId && !isLandingPage) {
-      // Show cached address immediately while re-auth happens
       const cachedAddress = localStorage.getItem("aegis_funding_address");
       dispatch({
         type: "SET_AUTHENTICATED",
@@ -626,7 +520,7 @@ export function WalletProvider({ children }) {
         fundingAddress: cachedAddress,
       });
 
-      // Hydrate last-known balance so UI doesn't flash $0.00
+      // Hydrate cached balance so UI doesn't flash $0.00
       try {
         const cached = JSON.parse(localStorage.getItem("aegis_cached_balance"));
         if (cached) {
@@ -634,39 +528,9 @@ export function WalletProvider({ children }) {
           if (cached.btcPrice) dispatch({ type: "SET_BTC_PRICE", price: cached.btcPrice });
         }
       } catch {}
-      dispatch({ type: "SET_LOADING", key: "balance", value: true });
 
-      // Silently re-authenticate to reload keys into memory
-      (async () => {
-        try {
-          const { entropy } = await passkey.authenticate();
-          const { fundingKey } = bitcoin.deriveKeys(entropy);
-          const fundingAddress = bitcoin.getFundingAddress(fundingKey);
-          localStorage.setItem("aegis_funding_address", fundingAddress);
-          dispatch({
-            type: "SET_AUTHENTICATED",
-            credentialId,
-            fundingAddress,
-          });
-
-          // Prove wallet ownership → get session token
-          try {
-            await proveWallet(credentialId);
-          } catch (err) {
-            console.warn("Backend auth failed:", err.message);
-          }
-
-          ws.connect();
-          // Only fetch if we have a valid token
-          if (api.getAuthToken()) {
-            fetchBalance();
-            fetchTransactions();
-            fetchAgentStatus();
-          }
-        } catch {
-          // Auth failed/cancelled — show cached data, don't fire API calls without token
-        }
-      })();
+      // Sync fresh data (no passkey needed — uses cached address for L1)
+      syncWallet();
     } else if (credentialId && isLandingPage) {
       // On landing page: just set cached state, no passkey prompt
       const cachedAddress = localStorage.getItem("aegis_funding_address");
@@ -678,19 +542,13 @@ export function WalletProvider({ children }) {
     }
   }, []);
 
-  // Fetch BTC price on mount and every 60s
-  useEffect(() => {
-    fetchBtcPrice();
-    const interval = setInterval(fetchBtcPrice, 60000);
-    return () => clearInterval(interval);
-  }, [fetchBtcPrice]);
-
   const value = {
     ...state,
     createWallet,
     authenticate,
     recoverWallet,
     logout,
+    syncWallet,
     fetchBalance,
     fetchTransactions,
     fetchAgentStatus,
