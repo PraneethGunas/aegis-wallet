@@ -1,20 +1,15 @@
 {
   "name": "aegis-wallet-backend",
-  "version": "0.0.1",
-  "description": "Aegis Wallet — MCP server + backend API",
+  "version": "0.1.0",
+  "description": "Aegis Wallet — LND proxy for the frontend",
   "type": "module",
   "scripts": {
     "dev": "node --watch src/server.js"
   },
   "dependencies": {
-    "@noble/curves": "^2.2.0",
-    "@noble/hashes": "^2.0.0",
-    "better-sqlite3": "^11.9.1",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
-    "express": "^4.21.2",
-    "jsonwebtoken": "^9.0.3",
-    "ws": "^8.18.2"
+    "express": "^4.21.2"
   },
   "engines": {
     "node": ">=22.0.0"
