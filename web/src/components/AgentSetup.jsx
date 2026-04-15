@@ -32,7 +32,7 @@ export default function AgentSetup({ onPaired, btcPrice = 100000, credentialId =
 
   const generatePrompt = (macaroon) => `I'm using the Aegis wallet — a Bitcoin Lightning wallet with AI agent support. I've given you access to it via the aegis-wallet MCP server. Add this to your MCP config if it's not already there:
 
-${JSON.stringify({ mcpServers: { "aegis-wallet": { command: "npx", args: ["-y", "aegis-wallet", "--macaroon", macaroon, "--api-url", process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001", "--user-id", credentialId] } } }, null, 2)}
+${JSON.stringify({ mcpServers: { "aegis-wallet": { command: "npx", args: ["-y", "aegis-wallet"], env: { LND_MACAROON_BASE64: macaroon, LND_REST_HOST: "https://localhost:8080", AEGIS_API_URL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001", AEGIS_WALLET_ID: credentialId, NODE_TLS_REJECT_UNAUTHORIZED: "0" } } } }, null, 2)}
 
 This is a real wallet on Bitcoin mainnet with real money. Your spending limit is ${budgetSats.toLocaleString()} sats (~$${budgetUsd}), enforced cryptographically by LND.
 
@@ -96,7 +96,7 @@ Pay any invoice within your balance — no approval needed. If a payment fails w
             whileTap={{ scale: 0.98 }}
             transition={spring}
             onClick={() => {
-              const config = JSON.stringify({ mcpServers: { "aegis-wallet": { command: "npx", args: ["-y", "aegis-wallet", "--macaroon", credential.macaroon, "--api-url", process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001", "--user-id", credentialId] } } }, null, 2);
+              const config = JSON.stringify({ mcpServers: { "aegis-wallet": { command: "npx", args: ["-y", "aegis-wallet"], env: { LND_MACAROON_BASE64: credential.macaroon, LND_REST_HOST: "https://localhost:8080", NODE_TLS_REJECT_UNAUTHORIZED: "0" } } } }, null, 2);
               navigator.clipboard.writeText(config);
               setCopiedConfig(true);
               setTimeout(() => setCopiedConfig(false), 2000);
