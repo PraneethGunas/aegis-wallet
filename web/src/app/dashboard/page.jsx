@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
-  Bot, Wallet, Zap, Plus, ArrowRightLeft, Pause, Play,
+  Bot, Wallet, Zap, Plus, ArrowRightLeft,
   Fingerprint, Loader2, ChevronDown, Copy, RefreshCw,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
@@ -20,8 +20,8 @@ const spring = { type: "spring", stiffness: 300, damping: 24 };
 export default function Dashboard() {
   const {
     balance, btcPrice, transactions, agent, fundingAddress, loading, credentialId,
-    pendingApproval, fetchBalance, fetchTransactions, fetchAgentStatus,
-    approveRequest, denyRequest, dismissApproval, payDirect, pauseAgent, resumeAgent,
+    pendingApproval, syncWallet, fetchAgentStatus,
+    approveRequest, denyRequest, dismissApproval, payDirect,
   } = useWallet();
 
   const [showFunding, setShowFunding] = useState(false);
@@ -35,14 +35,9 @@ export default function Dashboard() {
   const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
-    fetchBalance();
-    fetchTransactions();
-    fetchAgentStatus();
-  }, [fetchBalance, fetchTransactions, fetchAgentStatus]);
+    syncWallet();
+  }, [syncWallet]);
 
-  const spentUsd = ((agent.spentSats || 0) / 1e8) * btcPrice;
-  const budgetUsd = ((agent.budgetSats || 0) / 1e8) * btcPrice;
-  const budgetPct = budgetUsd > 0 ? Math.min(100, (spentUsd / budgetUsd) * 100) : 0;
 
   const handleFundAgent = async () => {
     if (!fundAmount) return;
@@ -57,7 +52,7 @@ export default function Dashboard() {
       await api.ln.fund(signedTxHex);
       setShowFundAgent(false);
       setFundAmount("");
-      fetchBalance();
+      syncWallet();
     } catch {}
     setFunding(false);
   };
@@ -77,15 +72,10 @@ export default function Dashboard() {
 
   const handleSync = async () => {
     setSyncing(true);
-    await Promise.all([fetchBalance(), fetchTransactions(), fetchAgentStatus()]);
+    await syncWallet();
     setSyncing(false);
   };
 
-  // Auto-poll balance every 30s
-  useEffect(() => {
-    const interval = setInterval(fetchBalance, 30000);
-    return () => clearInterval(interval);
-  }, [fetchBalance]);
 
 
   return (
@@ -103,6 +93,7 @@ export default function Dashboard() {
         }}
         onDeny={() => {
           if (pendingApproval?.type === "payment") {
+            api.agent.clearPendingInvoice(pendingApproval.bolt11).catch(() => {});
             dismissApproval();
           } else {
             denyRequest(pendingApproval?.approvalId);
@@ -340,106 +331,13 @@ export default function Dashboard() {
         >
           <p className="text-xs text-muted-foreground mb-3">Spending policy</p>
 
-          {!agent.isPaired ? (
-            <AgentSetup onPaired={fetchAgentStatus} btcPrice={btcPrice} credentialId={credentialId} />
-          ) : (
-            <div className="p-5 rounded-xl glass border border-border/50 space-y-5">
-              {/* Header */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-lg bg-secondary/10 flex items-center justify-center">
-                    <Bot className="w-[18px] h-[18px] text-secondary" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium">Claude</p>
-                    <div className="flex items-center gap-1.5">
-                      <span className={`pill ${
-                        agent.isActive
-                          ? "bg-success-green/15 text-success-green"
-                          : "bg-amber-500/15 text-amber-400"
-                      }`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${agent.isActive ? "bg-success-green" : "bg-amber-500"}`} />
-                        {agent.isActive ? "active" : "paused"}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <motion.button
-                  whileTap={{ scale: 0.9 }}
-                  transition={spring}
-                  onClick={agent.isActive ? pauseAgent : resumeAgent}
-                  className={`w-9 h-9 rounded-lg flex items-center justify-center transition-colors ${
-                    agent.isActive
-                      ? "bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"
-                      : "bg-success-green/10 text-success-green hover:bg-success-green/20"
-                  }`}
-                >
-                  {agent.isActive ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                </motion.button>
-              </div>
-
-              {/* Budget bar */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-muted-foreground">Budget</span>
-                  <span className="font-mono text-xs text-muted-foreground">
-                    ${spentUsd.toFixed(2)} / ${budgetUsd.toFixed(2)}
-                  </span>
-                </div>
-                <div className="h-2 rounded-full bg-muted overflow-hidden relative">
-                  {/* Tick marks */}
-                  <div className="absolute inset-0 flex">
-                    {[25, 50, 75].map((pct) => (
-                      <div key={pct} className="h-full border-r border-background/30" style={{ width: `${pct}%`, position: "absolute", left: `${pct}%` }} />
-                    ))}
-                  </div>
-                  <motion.div
-                    initial={{ width: 0 }}
-                    animate={{ width: `${budgetPct}%` }}
-                    transition={{ delay: 0.3, duration: 0.8, ease: "easeOut" }}
-                    className="h-full rounded-full bg-gradient-to-r from-secondary to-secondary/70"
-                  />
-                </div>
-              </div>
-
-              {/* Adjust spending limit */}
-              <div className="flex gap-2">
-                {[5, 10, 20].map((usd) => {
-                  const sats = Math.round((usd / btcPrice) * 1e8);
-                  return (
-                    <motion.button
-                      key={usd}
-                      whileTap={{ scale: 0.95 }}
-                      onClick={async () => {
-                        try {
-                          await api.agent.updateBudget(sats);
-                          fetchAgentStatus();
-                          fetchBalance();
-                        } catch {}
-                      }}
-                      className="flex-1 py-2 rounded-lg glass border border-border/50 font-mono text-xs text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      Set ${usd}
-                    </motion.button>
-                  );
-                })}
-              </div>
-
-              {/* Revoke */}
-              <button
-                onClick={async () => {
-                  try {
-                    await api.agent.revoke();
-                    fetchAgentStatus();
-                  } catch {}
-                }}
-                className="text-xs text-destructive/60 hover:text-destructive transition-colors"
-              >
-                Revoke agent access
-              </button>
-            </div>
-          )}
+          <AgentSetup
+            onPaired={fetchAgentStatus}
+            btcPrice={btcPrice}
+            credentialId={credentialId}
+            existingAgent={agent.isPaired ? agent : null}
+            l2BalanceSats={balance.l2Sats}
+          />
         </motion.div>
 
         {/* ── Activity ────────────────────────────────────────── */}

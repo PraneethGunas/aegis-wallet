@@ -87,15 +87,20 @@ export default function TxList({ transactions = [], btcPrice = 100000 }) {
               {(() => {
                 const sats = Math.abs(tx.amountSats || tx.amount || 0);
                 const usd = (sats / 1e8) * btcPrice;
-                const isPositive = (tx.amount || tx.amountSats || 0) > 0 || tx.type === "receive";
+                const isPositive = tx.type === "receive";
                 return (
-                  <p className={`font-mono text-sm ${
-                    isUnconfirmed
-                      ? "text-amber-500"
-                      : isPositive ? "text-success-green" : "text-foreground"
-                  }`} style={{ fontWeight: 500 }}>
-                    {isPositive ? "+" : "-"}${usd < 0.01 && usd > 0 ? "<0.01" : usd.toFixed(2)}
-                  </p>
+                  <>
+                    <p className={`font-mono text-sm ${
+                      isUnconfirmed
+                        ? "text-amber-500"
+                        : isPositive ? "text-success-green" : "text-destructive"
+                    }`} style={{ fontWeight: 500 }}>
+                      {sats.toLocaleString()} sats
+                    </p>
+                    <p className="font-mono text-[10px] text-muted-foreground">
+                      ${usd < 0.01 ? "0.00" : usd.toFixed(2)}
+                    </p>
+                  </>
                 );
               })()}
               {isUnconfirmed && (

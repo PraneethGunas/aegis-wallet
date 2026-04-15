@@ -3,9 +3,10 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Smartphone, ArrowLeft, AlertTriangle, Loader2, ChevronDown, Shield, Eye, EyeOff, Copy, Check } from "lucide-react";
+import { Smartphone, ArrowLeft, AlertTriangle, Loader2, ChevronDown, Shield, Eye, EyeOff, Copy, Check, Fingerprint } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useWallet } from "@/lib/store";
+import * as passkey from "@/lib/passkey";
 import * as bitcoin from "@/lib/bitcoin";
 import * as api from "@/lib/api";
 
@@ -16,6 +17,7 @@ export default function SettingsPage() {
   const [showRecovery, setShowRecovery] = useState(false);
   const [recoveryWords, setRecoveryWords] = useState(null);
   const [copiedRecovery, setCopiedRecovery] = useState(false);
+  const [loadingRecovery, setLoadingRecovery] = useState(false);
   const [withdrawAddress, setWithdrawAddress] = useState("");
   const [showWithdraw, setShowWithdraw] = useState(false);
   const [withdrawing, setWithdrawing] = useState(false);
@@ -96,19 +98,31 @@ export default function SettingsPage() {
               {!showRecovery ? (
                 <motion.button
                   whileTap={{ scale: 0.98 }}
-                  onClick={() => {
-                    const words = bitcoin.getRecoveryPhrase();
-                    if (words) {
-                      setRecoveryWords(words);
-                      setShowRecovery(true);
-                    } else {
-                      setError("Keys not loaded. Re-authenticate with your passkey first.");
+                  disabled={loadingRecovery}
+                  onClick={async () => {
+                    setLoadingRecovery(true);
+                    setError(null);
+                    try {
+                      // Derive keys on demand — triggers biometric
+                      let words = bitcoin.getRecoveryPhrase();
+                      if (!words) {
+                        const { entropy } = await passkey.authenticate();
+                        bitcoin.deriveKeys(entropy);
+                        words = bitcoin.getRecoveryPhrase();
+                      }
+                      if (words) {
+                        setRecoveryWords(words);
+                        setShowRecovery(true);
+                      }
+                    } catch (err) {
+                      setError(err.message);
                     }
+                    setLoadingRecovery(false);
                   }}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl border border-border hover:bg-muted transition-colors text-sm"
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl border border-border hover:bg-muted transition-colors text-sm disabled:opacity-50"
                 >
-                  <Eye className="w-4 h-4" />
-                  Show recovery phrase
+                  {loadingRecovery ? <Loader2 className="w-4 h-4 animate-spin" /> : <Fingerprint className="w-4 h-4" />}
+                  {loadingRecovery ? "Authenticating..." : "Show recovery phrase"}
                 </motion.button>
               ) : (
                 <div className="space-y-3">
@@ -143,6 +157,7 @@ export default function SettingsPage() {
                       onClick={() => {
                         setShowRecovery(false);
                         setRecoveryWords(null);
+                        bitcoin.discardKeys();
                       }}
                       className="flex items-center gap-2 px-4 py-2 rounded-xl border border-border hover:bg-muted text-sm"
                     >
