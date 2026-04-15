@@ -58,13 +58,13 @@ export default function AgentSetup({ onPaired, btcPrice = 100000, credentialId =
   const satsToUsd = (sats) => btcPrice > 0 ? ((sats / 1e8) * btcPrice).toFixed(2) : "0.00";
 
   const generateCli = (macaroon) =>
-    `claude mcp add aegis-wallet -e 'LND_MACAROON_BASE64=${macaroon}' -e LND_REST_HOST=https://localhost:8080 -e NODE_TLS_REJECT_UNAUTHORIZED=0 -e AEGIS_WEBHOOK_URL=${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001"}/agent/webhook -- npx aegis-wallet`;
+    `claude mcp add lightning-wallet-mcp -e 'LND_MACAROON_BASE64=${macaroon}' -e LND_REST_HOST=https://localhost:8080 -e NODE_TLS_REJECT_UNAUTHORIZED=0 -e AEGIS_WEBHOOK_URL=${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001"}/agent/webhook -- npx lightning-wallet-mcp`;
 
   const generateConfig = (macaroon) => JSON.stringify({
     mcpServers: {
-      "aegis-wallet": {
+      "lightning-wallet-mcp": {
         command: "npx",
-        args: ["-y", "aegis-wallet"],
+        args: ["-y", "lightning-wallet-mcp"],
         env: {
           LND_MACAROON_BASE64: macaroon,
           LND_REST_HOST: "https://localhost:8080",

@@ -1,13 +1,13 @@
-# Aegis — Full stack: LND signer + litd (watch-only) + backend + web
+# Aegis Wallet — infrastructure only
+#
+# The MCP server (lightning-wallet-mcp npm package) runs on the
+# user's machine and connects to LND REST (port 8080) from outside
+# Docker. This stack is the wallet's backend — not the MCP.
 #
 # Usage:
-#   docker compose up -d            # Start everything
-#   docker compose logs -f backend  # Follow backend logs
-#   docker compose down             # Stop (preserves data)
-#   docker compose down -v          # Stop + delete all data
-#
-# First run:
-#   ./scripts/init-wallet.sh        # Create wallets after containers are up
+#   docker compose up -d
+#   docker compose down
+#   docker compose down -v          # delete all data
 
 services:
   # Remote signer — holds private keys, signs transactions
@@ -61,7 +61,31 @@ services:
     networks:
       - aegis
 
-  # Aegis backend — Express API + WebSocket + MCP server
+  # Go LND Gateway — direct gRPC to LND, REST API for backend + MCP
+  lnd-gateway:
+    build:
+      context: ./lnd-gateway
+      dockerfile: Dockerfile
+    container_name: aegis-lnd-gateway
+    restart: unless-stopped
+    depends_on:
+      - litd
+    ports:
+      - "${GATEWAY_PORT:-3003}:3003"
+    environment:
+      - LND_GATEWAY_LISTEN=:3003
+      - LND_GRPC_HOST=litd:10009
+      - LND_CERT_PATH=/certs/tls.cert
+      - LND_MACAROON_PATH=/certs/admin.macaroon
+      - LITD_HOST=https://litd:8443
+      - LIT_MACAROON_PATH=/lit-certs/lit.macaroon
+    volumes:
+      - litd-data:/certs:ro
+      - litd-lit-data:/lit-certs:ro
+    networks:
+      - aegis
+
+  # Aegis backend — thin proxy to LND gateway + webhook receiver
   backend:
     build:
       context: ./backend
@@ -69,24 +93,13 @@ services:
     container_name: aegis-backend
     restart: unless-stopped
     depends_on:
-      - litd
+      - lnd-gateway
     ports:
       - "${BACKEND_PORT:-3001}:3001"
     environment:
       - PORT=3001
-      - LND_MACAROON_PATH=/certs/admin.macaroon
-      - LND_CERT_PATH=/certs/tls.cert
-      - LITD_HOST=https://litd:8443
-      - LND_REST_HOST=https://litd:8080
-      - JWT_SECRET=${JWT_SECRET:-aegis-dev-secret}
-      - RP_ID=${RP_ID:-localhost}
-      - ORIGIN=${ORIGIN:-http://localhost:3000}
-      - BITCOIN_NETWORK=${BITCOIN_NETWORK:-mainnet}
-      - DB_PATH=/data/aegis.db
+      - LND_GATEWAY_URL=http://lnd-gateway:3003
       - NODE_TLS_REJECT_UNAUTHORIZED=0
-    volumes:
-      - backend-data:/data
-      - litd-data:/certs:ro
     networks:
       - aegis
 
@@ -103,7 +116,6 @@ services:
       - "${WEB_PORT:-3000}:3000"
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:3001
-      - NEXT_PUBLIC_WS_URL=ws://localhost:3001/ws
     networks:
       - aegis
 
@@ -111,7 +123,6 @@ volumes:
   signer-data:
   litd-data:
   litd-lit-data:
-  backend-data:
 
 networks:
   aegis:
