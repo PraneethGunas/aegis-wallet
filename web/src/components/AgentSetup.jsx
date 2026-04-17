@@ -14,6 +14,7 @@ export default function AgentSetup({ onPaired, btcPrice = 100000, credentialId =
   const [copied, setCopied] = useState(null); // null | "config" | "claude" | "gemini"
   const [editing, setEditing] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const [macaroon, setMacaroon] = useState(null);
   const [error, setError] = useState(null);
 
   const budgetSats = Math.round((parseFloat(budgetUsd || 0) / btcPrice) * 1e8);
@@ -34,6 +35,7 @@ export default function AgentSetup({ onPaired, btcPrice = 100000, credentialId =
     try {
       const result = await api.agent.create(budgetSats);
       setCredential(result);
+      if (result.macaroon) setMacaroon(result.macaroon);
       onPaired?.();
     } catch (err) {
       setError(err.message);
@@ -45,7 +47,11 @@ export default function AgentSetup({ onPaired, btcPrice = 100000, credentialId =
     setUpdating(true);
     setError(null);
     try {
-      await api.agent.updateBudget(budgetSats, existingAgent.id);
+      const result = await api.agent.updateBudget(budgetSats, existingAgent.id);
+      if (!result.macaroon) {
+        throw new Error("Backend did not return a new macaroon");
+      }
+      setMacaroon(result.macaroon);
       setEditing(false);
       onPaired?.();
     } catch (err) {
@@ -57,16 +63,16 @@ export default function AgentSetup({ onPaired, btcPrice = 100000, credentialId =
   const satsToUsd = (sats) => btcPrice > 0 ? ((sats / 1e8) * btcPrice).toFixed(2) : "0.00";
 
   const generateClaudeCli = (macaroon) =>
-    `claude mcp add lightning-wallet-mcp -e 'LND_MACAROON_BASE64=${macaroon}' -e LND_REST_HOST=https://localhost:8080 -e NODE_TLS_REJECT_UNAUTHORIZED=0 -e AEGIS_WEBHOOK_URL=${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001"}/agent/webhook -- npx lightning-wallet-mcp`;
+    `claude mcp add ln-mcp -e 'LND_MACAROON_BASE64=${macaroon}' -e LND_REST_HOST=https://localhost:8080 -e NODE_TLS_REJECT_UNAUTHORIZED=0 -e AEGIS_WEBHOOK_URL=${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001"}/agent/webhook -- npx ln-mcp`;
 
   const generateGeminiCli = (macaroon) =>
-    `gemini mcp add lightning-wallet-mcp -e 'LND_MACAROON_BASE64=${macaroon}' -e LND_REST_HOST=https://localhost:8080 -e NODE_TLS_REJECT_UNAUTHORIZED=0 -e AEGIS_WEBHOOK_URL=${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001"}/agent/webhook -- npx lightning-wallet-mcp`;
+    `gemini mcp add -e 'LND_MACAROON_BASE64=${macaroon}' -e LND_REST_HOST=https://localhost:8080 -e NODE_TLS_REJECT_UNAUTHORIZED=0 -e AEGIS_WEBHOOK_URL=${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001"}/agent/webhook ln-mcp npx -- -y ln-mcp`;
 
   const generateConfig = (macaroon) => JSON.stringify({
     mcpServers: {
-      "lightning-wallet-mcp": {
+      "ln-mcp": {
         command: "npx",
-        args: ["-y", "lightning-wallet-mcp"],
+        args: ["-y", "ln-mcp"],
         env: {
           LND_MACAROON_BASE64: macaroon,
           LND_REST_HOST: "https://localhost:8080",
@@ -131,24 +137,12 @@ export default function AgentSetup({ onPaired, btcPrice = 100000, credentialId =
   const CopyButtons = ({ macaroon }) => (
     <div className="space-y-2">
       <div className="flex gap-2">
-        <CopyBtn
-          label="JSON config"
-          icon={Copy}
-          active={copied === "config"}
-          onClick={() => copyAndFlash(generateConfig(macaroon), "config")}
-        />
-        <CopyBtn
-          label="Claude CLI"
-          icon={Terminal}
-          active={copied === "claude"}
-          onClick={() => copyAndFlash(generateClaudeCli(macaroon), "claude")}
-        />
-        <CopyBtn
-          label="Gemini CLI"
-          icon={Terminal}
-          active={copied === "gemini"}
-          onClick={() => copyAndFlash(generateGeminiCli(macaroon), "gemini")}
-        />
+        <CopyBtn label="JSON config" icon={Copy} active={copied === "config"}
+          onClick={() => copyAndFlash(generateConfig(macaroon), "config")} />
+        <CopyBtn label="Claude CLI" icon={Terminal} active={copied === "claude"}
+          onClick={() => copyAndFlash(generateClaudeCli(macaroon), "claude")} />
+        <CopyBtn label="Gemini CLI" icon={Terminal} active={copied === "gemini"}
+          onClick={() => copyAndFlash(generateGeminiCli(macaroon), "gemini")} />
       </div>
       <p className="text-[10px] text-muted-foreground text-center">
         JSON for Claude Desktop / Gemini settings. CLI for terminal.
@@ -159,7 +153,6 @@ export default function AgentSetup({ onPaired, btcPrice = 100000, credentialId =
   // ── Existing agent ──────────────────────────────────────────────
   if (existingAgent && !credential) {
     const balanceSats = existingAgent.balanceSats ?? existingAgent.budgetSats;
-    const walletPct = l2BalanceSats > 0 ? Math.min(100, (balanceSats / l2BalanceSats) * 100) : 0;
 
     return (
       <div className="p-5 rounded-xl glass border border-border/50 space-y-4">
@@ -170,7 +163,7 @@ export default function AgentSetup({ onPaired, btcPrice = 100000, credentialId =
             <p className="text-sm font-medium">Agent budget</p>
           </div>
           <button
-            onClick={() => setEditing(!editing)}
+            onClick={() => { if (!editing) setMacaroon(null); setEditing(!editing); }}
             className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
           >
             <Settings2 className="w-3 h-3" />
@@ -194,36 +187,41 @@ export default function AgentSetup({ onPaired, btcPrice = 100000, credentialId =
         </div>
 
         {/* Edit slider */}
-        <AnimatePresence>
-          {editing && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-              className="space-y-3 overflow-hidden"
+        {editing && !macaroon && (
+          <div className="space-y-3">
+            <div className="pt-2 border-t border-border/50">
+              <SliderControl label="New limit" />
+            </div>
+
+            {error && <p className="text-xs text-destructive">{error}</p>}
+
+            <motion.button
+              whileTap={{ scale: 0.98 }}
+              transition={spring}
+              onClick={handleUpdateBudget}
+              disabled={updating}
+              className="w-full py-2.5 rounded-xl bg-secondary text-white flex items-center justify-center gap-2 disabled:opacity-40 text-sm font-medium"
             >
-              <div className="pt-2 border-t border-border/50">
-                <SliderControl label="New limit" />
+              {updating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Shield className="w-4 h-4" />}
+              {updating ? "Updating..." : "Update limit"}
+            </motion.button>
+          </div>
+        )}
+
+        {/* Updated — show new credentials */}
+        {macaroon && (
+          <div className="pt-3 border-t border-border/50 space-y-3">
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-5 rounded-full bg-success-green/15 flex items-center justify-center">
+                <Check className="w-3 h-3 text-success-green" />
               </div>
-
-              {error && <p className="text-xs text-destructive">{error}</p>}
-
-              <motion.button
-                whileTap={{ scale: 0.98 }}
-                transition={spring}
-                onClick={handleUpdateBudget}
-                disabled={updating}
-                className="w-full py-2.5 rounded-xl bg-secondary text-white flex items-center justify-center gap-2 disabled:opacity-40 text-sm font-medium"
-              >
-                {updating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Shield className="w-4 h-4" />}
-                {updating ? "Updating..." : "Update limit"}
-              </motion.button>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Copy buttons */}
-        {existingAgent.macaroon && <CopyButtons macaroon={existingAgent.macaroon} />}
+              <p className="text-xs font-medium text-success-green">
+                New credential ready — copy and paste into your agent
+              </p>
+            </div>
+            <CopyButtons macaroon={macaroon} />
+          </div>
+        )}
       </div>
     );
   }

@@ -10,10 +10,35 @@ const router = Router();
 // In-memory pending invoices (from webhook)
 const pendingInvoices = [];
 
+// SSE clients waiting for real-time events
+const sseClients = new Set();
+
+function broadcastSSE(data) {
+  const payload = `data: ${JSON.stringify(data)}\n\n`;
+  for (const res of sseClients) {
+    try { res.write(payload); } catch { sseClients.delete(res); }
+  }
+}
+
+// ── SSE — real-time event stream for the dashboard ───────────────────────────
+router.get("/events", (req, res) => {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+    "Access-Control-Allow-Origin": "*",
+  });
+  res.write(":\n\n"); // SSE comment to establish connection
+  sseClients.add(res);
+  req.on("close", () => sseClients.delete(res));
+});
+
 // ── Webhook — receives payment failure notifications from MCP ────────────────
 router.post("/webhook", (req, res) => {
   const { event, bolt11, amount_sats, description, error, url, timestamp } = req.body;
-  pendingInvoices.push({ bolt11, amount_sats, description, error, url, timestamp: timestamp || new Date().toISOString() });
+  const invoice = { bolt11, amount_sats, description, error, url, timestamp: timestamp || new Date().toISOString() };
+  pendingInvoices.push(invoice);
+  broadcastSSE({ type: "payment_pending", invoice });
   res.json({ ok: true });
 });
 
@@ -80,7 +105,8 @@ router.post("/budget", async (req, res, next) => {
     }
 
     await litd.updateBalance(accountId, budgetSats);
-    res.json({ ok: true, budgetSats });
+    const macaroon = await bakeAgentMacaroon(accountId);
+    res.json({ ok: true, budgetSats, macaroon });
   } catch (err) { next(err); }
 });
 

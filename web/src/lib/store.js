@@ -531,6 +531,28 @@ export function WalletProvider({ children }) {
 
       // Sync fresh data (no passkey needed — uses cached address for L1)
       syncWallet();
+
+      // SSE — real-time events from backend (payment approvals, etc.)
+      const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+      const es = new EventSource(`${apiBase}/agent/events`);
+      es.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data.type === "payment_pending" && data.invoice) {
+            dispatch({
+              type: "SET_PENDING_APPROVAL",
+              approval: {
+                type: "payment",
+                bolt11: data.invoice.bolt11,
+                amountSats: data.invoice.amount_sats,
+                reason: data.invoice.description || data.invoice.error || "Agent payment failed",
+              },
+            });
+          }
+        } catch {}
+      };
+      // Clean up on unmount
+      return () => es.close();
     } else if (credentialId && isLandingPage) {
       // On landing page: just set cached state, no passkey prompt
       const cachedAddress = localStorage.getItem("aegis_funding_address");
