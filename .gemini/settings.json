@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "ln-mcp": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "ln-mcp"
+      ],
+      "env": {
+        "LND_MACAROON_BASE64": "AgEDbG5kAr8CAwoQ62ywCHMaE0IouM2Zg7oyMhIBMBqmAgoDdXJpEiQvaW52b2ljZXNycGMuSW52b2ljZXMvQWRkSG9sZEludm9pY2USGy9sbnJwYy5MaWdodG5pbmcvQWRkSW52b2ljZRIfL2xucnBjLkxpZ2h0bmluZy9DaGFubmVsQmFsYW5jZRIdL2xucnBjLkxpZ2h0bmluZy9EZWNvZGVQYXlSZXESGC9sbnJwYy5MaWdodG5pbmcvR2V0SW5mbxIdL2xucnBjLkxpZ2h0bmluZy9MaXN0UGF5bWVudHMSIC9sbnJwYy5MaWdodG5pbmcvU2VuZFBheW1lbnRTeW5jEh8vcm91dGVycnBjLlJvdXRlci9TZW5kUGF5bWVudFYyEiAvcm91dGVycnBjLlJvdXRlci9UcmFja1BheW1lbnRWMgACI2xuZC1jdXN0b20gYWNjb3VudCAxYjcxZGE4NTBjZDJkNjM1AAAGIPYFTBAhSWvUK+T22/zf/E0QMWmHrRZDazwncqHC4axU",
+        "LND_REST_HOST": "https://localhost:8080",
+        "NODE_TLS_REJECT_UNAUTHORIZED": "0",
+        "AEGIS_WEBHOOK_URL": "http://localhost:3001/agent/webhook"
+      }
+    }
+  }
+}

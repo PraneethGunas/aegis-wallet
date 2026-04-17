@@ -1,6 +1,6 @@
 # Aegis Wallet — infrastructure only
 #
-# The MCP server (lightning-wallet-mcp npm package) runs on the
+# The MCP server (ln-mcp npm package) runs on the
 # user's machine and connects to LND REST (port 8080) from outside
 # Docker. This stack is the wallet's backend — not the MCP.
 #
