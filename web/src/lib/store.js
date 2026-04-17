@@ -3,8 +3,8 @@
 /**
  * Wallet state context — shared across all pages.
  *
- * Manages: authentication state, balances, BTC price,
- * agent status, and WebSocket connection lifecycle.
+ * Manages: authentication state, balances, BTC price, agent status.
+ * Real-time events arrive via SSE (EventSource on /agent/events).
  */
 
 import { createContext, useContext, useCallback, useEffect, useReducer } from "react";
@@ -12,7 +12,6 @@ import * as passkey from "./passkey";
 import * as bitcoin from "./bitcoin";
 import * as mempool from "./mempool";
 import * as api from "./api";
-// WebSocket removed — no server-side push needed for self-custodial wallet
 
 const WalletContext = createContext(null);
 
@@ -60,7 +59,7 @@ const initialState = {
     error: null,
   },
 
-  // Pending approval (from WebSocket)
+  // Pending approval (from SSE /agent/events)
   pendingApproval: null,
 
   // Loading states
@@ -487,7 +486,6 @@ export function WalletProvider({ children }) {
             dispatch({ type: "SET_FUNDING_STEP", funding: { step: "opening_channel" } });
             try {
               await api.ln.openChannel(amountSats);
-              // channel_confirmed will come via WebSocket
             } catch (err) {
               dispatch({ type: "SET_FUNDING_STEP", funding: { step: "error", error: err.message } });
             }
